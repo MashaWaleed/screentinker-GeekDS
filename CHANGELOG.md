@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+**Every OTA left a copy of the APK behind, forever.** The update cleanup swept
+`getExternalFilesDir(DIRECTORY_DOWNLOADS)`, but staging tries internal storage first and almost
+always succeeds there, so the downloaded APK sat in a directory cleanup never looked at. One whole
+APK stranded per superseded version, in the same internal storage the next update then checks for
+free space. Invisible at 9MB; not at 29.6MB. Cleanup now sweeps every directory staging can choose,
+reading the one candidate list rather than repeating an entry of it, so a future staging location is
+swept automatically. Confirmed on-device before the fix: after a clean 2.0.8 to 2.0.9 update the
+player logged that it was clearing update state while the 29.6MB APK remained on disk.
+
 ### Changed
 
 **The Android APK is 44% smaller.** 2.0.9's live-video publisher added the WebRTC native library for
