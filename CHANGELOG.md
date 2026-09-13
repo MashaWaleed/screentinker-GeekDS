@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+**LG webOS 4, 5 and 6 panels can run the player.** They ship browser engines older than the player's
+JavaScript needs, so until now they loaded nothing; the documentation said as much. The server now
+serves a second copy of the player at a separate address, transpiled ahead of time for those older
+engines, along with matching copies of the service worker and the optional live-video and talk
+scripts. Panels new enough for the normal player are unaffected and never see it. A panel older
+still than webOS 4 is told so plainly instead of showing a black screen.
+
+The transpiled copies are built by a script and committed, rather than being produced on demand, so
+nothing is transformed while a request is waiting and the build tool is not needed to run the
+server. A guard fails the build if a committed copy drifts from its source, and a second guard
+compiles every script the old engine loads and fails if any of it would need downlevelling. Layout
+features those engines lack have been replaced throughout the pages a panel renders, with the
+bounds preserved rather than approximated, so modern panels look identical. Contributed by
+MashaWaleed.
+
 ### Fixed
 
 **The dashboard never reported a single client-side error.** The player has posted its JavaScript
