@@ -112,6 +112,13 @@ test('webos: the player only forms a host bridge when a shell asks for one', () 
   assert.match(bridge, /d\.source !== 'screentinker-host'\) return/);
 });
 
+test('webos: old browser engines keep the shell and load the legacy player in its iframe', () => {
+  const shell = fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8');
+  assert.match(shell, /supportsModernPlayer\(\) \? '\/player' : '\/player\/legacy'/);
+  assert.match(shell, /frame\.src = playerUrl\(\)/);
+  assert.doesNotMatch(shell, /window\.location\.replace\(serverUrl \+ '\/player\/legacy'/);
+});
+
 test('webos: the player declares the host capabilities it was told about, and routes commands to them', () => {
   const player = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'), 'utf8');
   const start = player.indexOf('function declaredCapabilities()');

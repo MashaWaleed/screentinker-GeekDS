@@ -50,7 +50,8 @@
 
   // ---------------------------------------------------------------- the player frame
   function playerUrl() {
-    return serverUrl + '/player?host=webos&v=' + encodeURIComponent(APP_VERSION_FALLBACK);
+    var path = supportsModernPlayer() ? '/player' : '/player/legacy';
+    return serverUrl + path + '?host=webos&v=' + encodeURIComponent(APP_VERSION_FALLBACK);
   }
 
   function supportsModernPlayer() {
@@ -58,11 +59,6 @@
   }
 
   function mountPlayer() {
-    // webOS 4.x uses the transpiled player directly.
-    if (!supportsModernPlayer()) {
-      window.location.replace(serverUrl + '/player/legacy');
-      return;
-    }
     var stage = $('stage');
     if (frame) { try { stage.removeChild(frame); } catch (e) {} frame = null; }
     frame = document.createElement('iframe');

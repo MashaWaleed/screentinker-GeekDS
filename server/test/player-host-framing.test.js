@@ -65,6 +65,21 @@ test('a player host lets its own local page frame the player', async () => {
   });
 });
 
+test('the legacy route serves prebuilt player assets without a runtime transform', async () => {
+  await withServer({}, async (base) => {
+    const page = await fetch(`${base}/player/legacy?host=webos`);
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /window\.__playerConfig/);
+    assert.match(html, /live-publish-legacy\.js/);
+    assert.match(html, /talk-legacy\.js/);
+    for (const asset of ['/sw-legacy.js', '/player/live-publish-legacy.js', '/player/talk-legacy.js']) {
+      const res = await fetch(base + asset);
+      assert.equal(res.status, 200, asset);
+    }
+  });
+});
+
 test('THE DEEPER CASE: nested frames inside the player are freed too', async () => {
   // SAMEORIGIN is judged against the top-level document, which here is file://. If this header
   // survives anywhere the player frames, that content is black even though /player itself renders.

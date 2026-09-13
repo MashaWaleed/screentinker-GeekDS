@@ -832,10 +832,10 @@ function renderDirectoryBoard(c) {
   @keyframes bg-pulse { 0%,100% { background:#1a1a2e; } 50% { background:#1b1b30; } }
   @keyframes bg-pulse-light { 0%,100% { background:#f5f5f5; } 50% { background:#ededf0; } }
 
-  .page { position:fixed; inset:0; overflow:hidden; transition: transform 1.5s ease; will-change: transform; }
+  .page { position:fixed; top:0; right:0; bottom:0; left:0; overflow:hidden; transition: transform 1.5s ease; will-change: transform; }
 
-  .bg-layer { position:absolute; inset:0; z-index:0; }
-  .bg-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 2s ease-in-out; }
+  .bg-layer { position:absolute; top:0; right:0; bottom:0; left:0; z-index:0; }
+  .bg-img { position:absolute; top:0; right:0; bottom:0; left:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 2s ease-in-out; }
   .bg-img.active { opacity:0.30; }
 
   .header {

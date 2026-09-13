@@ -138,7 +138,7 @@ router.get('/:id/render', (req, res) => {
   .kiosk-btn .label { font-size:${safeNumber(style.labelSize, 20)}px; font-weight:600; }
   .kiosk-btn .sublabel { font-size:${safeNumber(style.sublabelSize, 14)}px; opacity:0.6; }
   .footer { padding:20px 60px; text-align:center; font-size:14px; opacity:0.4; }
-  .idle-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.95); display:none; flex-direction:column;
+  .idle-overlay { position:fixed; top:0; right:0; bottom:0; left:0; background:rgba(0,0,0,0.95); display:none; flex-direction:column;
     align-items:center; justify-content:center; z-index:100; cursor:pointer; }
   .idle-overlay h2 { font-size:48px; margin-bottom:16px; }
   .idle-overlay p { font-size:20px; opacity:0.6; }

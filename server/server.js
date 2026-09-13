@@ -19,7 +19,6 @@ const fs = require('fs');
 const config = require('./config');
 const VERSION = require('./version');
 const ghcrCheck = require('./lib/ghcr-check');
-const legacyPlayer = require('./lib/legacy-player');
 
 // #114: last-resort crash safety net. better-sqlite3 is SYNCHRONOUS, so a constraint
 // violation (e.g. a FK write) inside a socket.io handler with no local try/catch
@@ -367,8 +366,8 @@ app.use(express.static(config.frontendDir, { index: false, etag: true, lastModif
 // server-side endpoint defends in depth, but the kill switch saves network
 // traffic on the device too). Other player assets (JS, sw.js, etc) are still
 // served by the static middleware below; only index.html is dynamic.
-function sendPlayer(res, legacy) {
-  const playerHtmlPath = path.join(__dirname, 'player', 'index.html');
+function sendPlayer(res, file) {
+  const playerHtmlPath = path.join(__dirname, 'player', file);
   fs.readFile(playerHtmlPath, 'utf8', (err, html) => {
     if (err) return res.status(500).type('text/plain').send('player HTML unavailable');
     const reportingEnabled = String(process.env.PLAYER_DEBUG_REPORTING || 'on').toLowerCase() !== 'off';
@@ -397,28 +396,18 @@ function sendPlayer(res, legacy) {
     if (stamped === modified) {
       console.warn('[player] ST_PLAYER_VERSION marker not found — page will report a stale client_version');
     }
-    if (legacy) {
-      try {
-        modified = legacyPlayer.html(stamped);
-      } catch (error) {
-        // A transform failure is a bad response for this request, not a process-wide failure.
-        console.error('[player] legacy transform failed:', error.message);
-        return res.status(500).type('text/plain').send('legacy player unavailable');
-      }
-    } else {
-      modified = stamped;
-    }
+    modified = stamped;
     res.type('html').setHeader('Cache-Control', 'no-cache');
     res.send(modified);
   });
 }
 
 app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
-  sendPlayer(res, false);
+  sendPlayer(res, 'index.html');
 });
 
 app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html'], (req, res) => {
-  sendPlayer(res, true);
+  sendPlayer(res, 'legacy.html');
 });
 
 // #74/#75: serve the canonical schedule evaluator to the web player from the
@@ -444,11 +433,21 @@ app.get('/player/live-publish.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'lib', 'live-publish.js'));
 });
 
+app.get('/player/live-publish-legacy.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'player', 'live-publish-legacy.js'));
+});
+
 // #talk: the web-player voice-intercom module (lib/talk-web.js), same serving pattern. Harmless
 // when talk is unused — it only acts on a device:talk-start.
 app.get('/player/talk.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'talk-web.js'));
+});
+
+app.get('/player/talk-legacy.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'player', 'talk-legacy.js'));
 });
 
 // Offline content-cache policy, imported by the service worker via importScripts and by the Node
@@ -475,6 +474,12 @@ app.get('/sw.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Service-Worker-Allowed', '/');   // belt: harmless, and correct where it survives
   res.sendFile(path.join(__dirname, 'player', 'sw.js'));
+});
+
+app.get('/sw-legacy.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'player', 'sw-legacy.js'));
 });
 
 app.get('/player/cache-policy.js', (req, res) => {
