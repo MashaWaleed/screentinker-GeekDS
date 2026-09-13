@@ -110,7 +110,12 @@ test('player-rendered HTML uses layout CSS supported by Chrome 53', () => {
   ]) {
     const source = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /\binset\s*:/, file);
-    assert.doesNotMatch(styleBlocks(source), /\bgap\s*:/, file);
+    // ⚠️ One deliberate exception: `.entries` is `display:grid`, which is Chromium 57 — the
+    // element is an inert block on a Chrome 53 panel and its gap can never apply there, while
+    // removing it cost every modern multi-column directory board its 36px gutter. Everything
+    // else must still avoid gap, because flex gap (Chromium 84) DOES change layout on engines
+    // that support the flexbox around it.
+    assert.doesNotMatch(styleBlocks(source).replace(/\.entries \{[^}]*\}/g, ''), /\bgap\s*:/, file);
     assert.doesNotMatch(styleBlocks(source), /\b[-a-z]+\s*:\s*clamp\(/, file);
   }
 });

@@ -878,14 +878,21 @@ function renderDirectoryBoard(c) {
   }
   body.light .category h2 { border-bottom-color: rgba(0,0,0,0.12); }
 
-  .entries { display:grid; }
+  /* grid-gap is deliberate: display:grid is itself Chromium 57, so on a Chrome 53 panel this
+     element is an inert block and the gap can never apply. Removing it only cost modern
+     multi-column boards their 36px gutter. See the row-gap note below. */
+  .entries { display:grid; gap:14px 36px; }
   .entries[data-cols="auto"] { grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }
   .entries[data-cols="1"] { grid-template-columns: 1fr; }
   .entries[data-cols="2"] { grid-template-columns: repeat(2, 1fr); }
   .entries[data-cols="3"] { grid-template-columns: repeat(3, 1fr); }
   .entries[data-cols="4"] { grid-template-columns: repeat(4, 1fr); }
 
+  /* Row gap for engines with no grid support, where .entries lays out as a plain block.
+     @supports is Chromium 28, so a real grid engine zeroes this and uses the gap above rather
+     than double-spacing rows and trailing a margin after the last one. */
   .entry { font-size:38px; line-height:1.35; color:#fff; display:flex; align-items:baseline; margin-bottom:14px; }
+  @supports (display:grid) { .entry { margin-bottom:0; } }
   .entry .id { font-weight:600; min-width:3.5em; flex-shrink:0; margin-right:14px; }
   .entry .text { display:flex; flex-direction:column; flex:1; min-width:0; }
   .entry .nm { font-weight:400; }
