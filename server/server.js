@@ -390,7 +390,7 @@ function sendPlayer(res, file) {
     // say so loudly, because the failure is otherwise invisible: every panel just keeps reporting
     // a stale version and looks fine.
     const stamped = modified.replace(
-      /(const PLAYER_VERSION = )'[^']*'/,
+      /(const PLAYER_VERSION\s*=\s*)['"][^'"]*['"]/,
       `$1'${String(VERSION).replace(/'/g, '')}'`
     );
     if (stamped === modified) {

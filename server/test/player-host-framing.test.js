@@ -26,6 +26,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { freePort } = require('./helpers/free-port');
+const VERSION = require('../version');
 
 async function withServer(env, fn) {
   const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'st-framing-'));
@@ -71,6 +72,7 @@ test('the legacy route serves prebuilt player assets without a runtime transform
     assert.equal(page.status, 200);
     const html = await page.text();
     assert.match(html, /window\.__playerConfig/);
+    assert.match(html, new RegExp("const PLAYER_VERSION\\s*=\\s*'" + String(VERSION).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'"));
     assert.match(html, /live-publish-legacy\.js/);
     assert.match(html, /talk-legacy\.js/);
     for (const asset of ['/sw-legacy.js', '/player/live-publish-legacy.js', '/player/talk-legacy.js']) {

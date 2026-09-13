@@ -52,10 +52,10 @@ test('webos: the build script is valid bash and assembles an installable-looking
     assert.match(data, new RegExp(`usr/palm/packages/${appinfo.id.replace(/\\./g, '\\\\.')}/packageinfo\\.json`));
     assert.match(data, /applications\/[^/]+\/js\/app\.js/);
     assert.match(data, /applications\/[^/]+\/js\/device-control\.js/);
-    const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O ./control`]).toString();
+    const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O control`]).toString();
     assert.match(control, new RegExp(`^Package: ${appinfo.id}$`, 'm'));
     assert.match(control, new RegExp(`^Version: ${appinfo.version}$`, 'm'));
-    assert.match(control, /^webOS_package_format_version: 2$/m);
+    assert.match(control, /^webOS(?:_package_format_version|-Package-Format-Version): 2$/m);
     // The build stamps js/app.js from appinfo.json, exactly as the Tizen build stamps from config.xml.
     assert.match(fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8'),
       new RegExp(`var APP_VERSION_FALLBACK = '${appinfo.version}';`));

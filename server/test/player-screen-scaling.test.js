@@ -29,7 +29,9 @@ const SURFACES = [
 for (const { name, file } of SURFACES) {
   test(`${name}: the root font size is viewport-proportional and clamped at both ends`, () => {
     const src = read(file);
-    const m = src.match(/html\s*\{\s*font-size:\s*clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vmin\s*,\s*([\d.]+)px\s*\)/);
+    const start = src.indexOf('html {');
+    const rule = src.slice(start, src.indexOf('}', start));
+    const m = rule.match(/font-size:\s*clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vmin\s*,\s*([\d.]+)px\s*\)/);
     assert.ok(m, `${file} must set a clamped, vmin-based root font size`);
     const [, min, vmin, max] = m.map(Number);
 

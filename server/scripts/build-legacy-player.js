@@ -2,14 +2,24 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const esbuild = require('esbuild');
 
 const SERVER = path.join(__dirname, '..');
 const PLAYER = path.join(SERVER, 'player');
 const START = '<script>\n    // ==================== i18n ====================';
+let esbuild;
+
+function compiler() {
+  if (esbuild) return esbuild;
+  try {
+    esbuild = require('esbuild');
+    return esbuild;
+  } catch (_) {
+    throw new Error('esbuild is required to build legacy player artifacts; run npm install first');
+  }
+}
 
 function transform(source) {
-  return esbuild.transformSync(source, { loader: 'js', target: 'chrome53', minifyWhitespace: true }).code;
+  return compiler().transformSync(source, { loader: 'js', target: 'chrome53' }).code;
 }
 
 function legacyHtml() {

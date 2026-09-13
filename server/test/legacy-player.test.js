@@ -4,41 +4,38 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const esbuild = require('esbuild');
 const transitionBundle = require('../lib/transition-bundle');
 
-function executableCode(source) {
-  return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|(['"`])(?:\\.|(?!\1)[^\\])*\1/g, ' ');
+function compile(source, target) {
+  return esbuild.transformSync(source, { loader: 'js', target, minifyWhitespace: true }).code;
 }
 
-const chrome53Breakers = /\?\.(?!\d)|\?\?(?![=?])|\basync\s+(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)|\bawait\s+|catch\s*\{/;
+function assertChrome53Syntax(source, name) {
+  assert.equal(compile(source, 'chrome53'), compile(source, 'esnext'), name);
+}
 
 const PLAYER = path.join(__dirname, '..', 'player');
-
-function coreScript(html) {
-  const start = html.indexOf('<script>', html.indexOf('/player/transitions.js'));
-  const end = html.indexOf('\n  </script>', start);
-  assert.ok(start >= 0 && end > start);
-  return html.slice(start, end);
-}
 
 test('legacy player artifacts are current and Chrome 53 compatible', () => {
   const html = fs.readFileSync(path.join(PLAYER, 'legacy.html'), 'utf8');
   const scripts = [
-    ['player', coreScript(html)],
     ['service worker', fs.readFileSync(path.join(PLAYER, 'sw-legacy.js'), 'utf8')],
     ['live publish', fs.readFileSync(path.join(PLAYER, 'live-publish-legacy.js'), 'utf8')],
     ['talk', fs.readFileSync(path.join(PLAYER, 'talk-legacy.js'), 'utf8')],
   ];
   for (const [name, script] of scripts) {
-    assert.doesNotMatch(executableCode(script), chrome53Breakers, name);
+    assertChrome53Syntax(script, name);
   }
+  assert.ok(html.indexOf('<script>', html.indexOf('/player/transitions.js')) >= 0,
+    'the transformed inline player script is present');
   assert.doesNotMatch(html, /\binset\s*:/, 'legacy player CSS uses four supported edges');
   assert.doesNotMatch(html, /\.padStart\(/, 'legacy player avoids Chrome 57 String.padStart');
   assert.match(html, /src="\/player\/live-publish-legacy\.js"/);
   assert.match(html, /src="\/player\/talk-legacy\.js"/);
 });
 
-test('legacy player dependencies remain Chrome 53 syntax compatible', () => {
+test('legacy player dependencies need no Chrome 53 syntax lowering', () => {
   const scripts = [
     ['debug overlay', path.join(__dirname, '..', 'player', 'debug-overlay.js')],
     ['ST bridge', path.join(__dirname, '..', '..', 'brightsign', 'st-bridge.js')],
@@ -50,12 +47,24 @@ test('legacy player dependencies remain Chrome 53 syntax compatible', () => {
     ['orientation style', path.join(__dirname, '..', 'lib', 'orientation-style.js')],
     ['wall geometry', path.join(__dirname, '..', 'lib', 'wall-geometry.js')],
     ['media health', path.join(__dirname, '..', 'lib', 'player-media-health.js')],
+    ['cache policy', path.join(__dirname, '..', 'lib', 'player-cache-policy.js')],
+    ['Socket.IO client', path.join(__dirname, '..', 'node_modules', 'socket.io', 'client-dist', 'socket.io.js')],
   ];
 
   for (const [name, file] of scripts) {
-    assert.doesNotMatch(executableCode(fs.readFileSync(file, 'utf8')), chrome53Breakers, name);
+    assertChrome53Syntax(fs.readFileSync(file, 'utf8'), name);
   }
-  assert.doesNotMatch(executableCode(transitionBundle.bundle()), chrome53Breakers, 'transitions');
+  assertChrome53Syntax(transitionBundle.bundle(), 'transitions');
+});
+
+test('the dependency guard detects syntax Chrome 53 cannot parse', () => {
+  for (const source of [
+    'const copy = { ...source };',
+    'class Example { value = 1; }',
+    'state ||= nextState;',
+  ]) {
+    assert.notEqual(compile(source, 'chrome53'), compile(source, 'esnext'), source);
+  }
 });
 
 test('legacy artifact builder has no uncommitted output', () => {
@@ -77,6 +86,11 @@ test('legacy route preserves legacy navigation and serves prebuilt assets', () =
     assert.ok(server.includes(asset), `server route serves ${asset}`);
   }
   assert.doesNotMatch(server, /require\(['"]\.\/lib\/legacy-player['"]\)/);
+});
+
+test('legacy player responses receive the current server version', () => {
+  const legacy = fs.readFileSync(path.join(PLAYER, 'legacy.html'), 'utf8');
+  assert.match(legacy, /const PLAYER_VERSION\s*=\s*['"][^'"]+['"]/);
 });
 
 test('player-rendered HTML uses CSS edges supported by Chrome 53', () => {
