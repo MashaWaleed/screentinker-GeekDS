@@ -44,9 +44,9 @@ controls; the dashboard hides those buttons for a panel whose app reports it can
 
 ## What the panel has to support
 
-The player uses modern JavaScript (optional chaining), which needs Chromium 80 or newer. That
-is webOS Signage 22 and later. Older panels (webOS 3, 4 and 6) run older engines and will not
-load the player until a transpiled build exists; that is the known follow-up.
+The shell selects a Chrome 53-compatible player build for webOS 4.x, 5.x and 6.x panels, while
+webOS Signage 22 and later use the modern player. webOS 3.x browsers are older than that build's
+baseline and show a clear compatibility message instead of loading a blank player frame.
 
 ## Not verified on hardware
 

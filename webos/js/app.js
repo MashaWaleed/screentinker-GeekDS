@@ -58,6 +58,10 @@
     try { return Function('return ({ value: 1 })?.value ?? 0')() === 1; } catch (e) { return false; }
   }
 
+  function supportsLegacyPlayer() {
+    try { return Function('const value = `ok`; return (() => value)()')() === 'ok'; } catch (e) { return false; }
+  }
+
   function mountPlayer() {
     var stage = $('stage');
     if (frame) { try { stage.removeChild(frame); } catch (e) {} frame = null; }
@@ -148,6 +152,14 @@
     setTimeout(function () { $('server').focus(); }, 50);
   }
 
+  function showUnsupported() {
+    showSetup(false);
+    $('server').disabled = true;
+    $('save').disabled = true;
+    $('setupError').textContent = 'This TV browser is too old for ScreenTinker. webOS 4 or newer is required.';
+    $('setupError').classList.remove('hidden');
+  }
+
   function saveSetup() {
     var u = normaliseUrl($('server').value);
     if (!u) { $('setupError').textContent = 'Enter the server address.'; $('setupError').classList.remove('hidden'); return; }
@@ -170,6 +182,7 @@
     $('save').addEventListener('click', saveSetup);
     $('cancel').addEventListener('click', function () { $('setup').classList.add('hidden'); });
     $('server').addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.keyCode === 13) saveSetup(); });
+    if (!supportsLegacyPlayer()) { showUnsupported(); return; }
     loadPackagedConfig().then(function (cfg) {
       serverUrl = normaliseUrl(storedServer() || (cfg && cfg.serverUrl) || '');
       if (serverUrl) { mountPlayer(); setTimeout(checkUpdate, 15000); setInterval(checkUpdate, UPDATE_CHECK_MS); }

@@ -52,7 +52,10 @@ test('webos: the build script is valid bash and assembles an installable-looking
     assert.match(data, new RegExp(`usr/palm/packages/${appinfo.id.replace(/\\./g, '\\\\.')}/packageinfo\\.json`));
     assert.match(data, /applications\/[^/]+\/js\/app\.js/);
     assert.match(data, /applications\/[^/]+\/js\/device-control\.js/);
-    const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O control`]).toString();
+    const controlMembers = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar tzf -`]).toString().trim().split('\n');
+    const controlName = controlMembers.includes('./control') ? './control' : 'control';
+    assert.ok(controlMembers.includes(controlName), 'control.tar.gz contains its control file');
+    const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O "${controlName}"`]).toString();
     assert.match(control, new RegExp(`^Package: ${appinfo.id}$`, 'm'));
     assert.match(control, new RegExp(`^Version: ${appinfo.version}$`, 'm'));
     assert.match(control, /^webOS(?:_package_format_version|-Package-Format-Version): 2$/m);
@@ -115,6 +118,10 @@ test('webos: the player only forms a host bridge when a shell asks for one', () 
 test('webos: old browser engines keep the shell and load the legacy player in its iframe', () => {
   const shell = fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8');
   assert.match(shell, /supportsModernPlayer\(\) \? '\/player' : '\/player\/legacy'/);
+  assert.match(shell, /function supportsLegacyPlayer\(\)/);
+  assert.match(shell, /if \(!supportsLegacyPlayer\(\)\) \{ showUnsupported\(\); return; \}/,
+    'pre-Chrome-53 panels receive an explanation before an incompatible player is mounted');
+  assert.match(shell, /webOS 4 or newer is required/);
   assert.match(shell, /frame\.src = playerUrl\(\)/);
   assert.doesNotMatch(shell, /window\.location\.replace\(serverUrl \+ '\/player\/legacy'/);
 });

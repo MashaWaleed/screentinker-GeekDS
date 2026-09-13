@@ -406,7 +406,7 @@ app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
   sendPlayer(res, 'index.html');
 });
 
-app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html'], (req, res) => {
+app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html', '/player/legacy.html'], (req, res) => {
   sendPlayer(res, 'legacy.html');
 });
 

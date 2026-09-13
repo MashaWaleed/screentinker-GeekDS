@@ -25,9 +25,10 @@ function transform(source) {
 function legacyHtml() {
   const source = fs.readFileSync(path.join(PLAYER, 'index.html'), 'utf8');
   const start = source.indexOf(START);
+  if (start < 0) throw new Error('player script start marker not found');
   const codeStart = start + '<script>'.length;
   const end = source.indexOf('\n  </script>', codeStart);
-  if (start < 0 || end < 0) throw new Error('player script marker not found');
+  if (end < 0) throw new Error('player script end marker not found');
   const output = source.slice(0, codeStart) + '\n' + transform(source.slice(codeStart, end)) + source.slice(end);
   return output
     .replace('src="/player/live-publish.js"', 'src="/player/live-publish-legacy.js"')

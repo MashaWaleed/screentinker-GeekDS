@@ -17,6 +17,10 @@ function assertChrome53Syntax(source, name) {
 
 const PLAYER = path.join(__dirname, '..', 'player');
 
+function styleBlocks(source) {
+  return Array.from(source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g), (m) => m[1]).join('\n');
+}
+
 test('legacy player artifacts are current and Chrome 53 compatible', () => {
   const html = fs.readFileSync(path.join(PLAYER, 'legacy.html'), 'utf8');
   const scripts = [
@@ -30,6 +34,8 @@ test('legacy player artifacts are current and Chrome 53 compatible', () => {
   assert.ok(html.indexOf('<script>', html.indexOf('/player/transitions.js')) >= 0,
     'the transformed inline player script is present');
   assert.doesNotMatch(html, /\binset\s*:/, 'legacy player CSS uses four supported edges');
+  assert.doesNotMatch(html, /\bgap\s*:/, 'legacy player avoids unsupported flex and grid gap');
+  assert.doesNotMatch(styleBlocks(html), /\b[-a-z]+\s*:\s*clamp\(/, 'legacy player avoids CSS clamp');
   assert.doesNotMatch(html, /\.padStart\(/, 'legacy player avoids Chrome 57 String.padStart');
   assert.match(html, /src="\/player\/live-publish-legacy\.js"/);
   assert.match(html, /src="\/player\/talk-legacy\.js"/);
@@ -82,6 +88,7 @@ test('legacy route preserves legacy navigation and serves prebuilt assets', () =
   assert.match(source, /IS_LEGACY_PLAYER \? '\/player\/legacy' : '\/player'/);
   assert.match(source, /host \? '&host=' \+ encodeURIComponent\(host\) : ''/);
   assert.match(source, /IS_LEGACY_PLAYER \? '\/sw-legacy\.js' : '\/sw\.js'/);
+  assert.match(source, /new URL\(url, window\.location\.href\)\.pathname === serviceWorkerUrl/);
   for (const asset of ['legacy.html', 'sw-legacy.js', 'live-publish-legacy.js', 'talk-legacy.js']) {
     assert.ok(server.includes(asset), `server route serves ${asset}`);
   }
@@ -93,7 +100,7 @@ test('legacy player responses receive the current server version', () => {
   assert.match(legacy, /const PLAYER_VERSION\s*=\s*['"][^'"]+['"]/);
 });
 
-test('player-rendered HTML uses CSS edges supported by Chrome 53', () => {
+test('player-rendered HTML uses layout CSS supported by Chrome 53', () => {
   for (const file of [
     path.join(PLAYER, 'index.html'),
     path.join(__dirname, '..', 'lib', 'slide-render.js'),
@@ -101,6 +108,9 @@ test('player-rendered HTML uses CSS edges supported by Chrome 53', () => {
     path.join(__dirname, '..', 'routes', 'kiosk.js'),
     path.join(__dirname, '..', 'routes', 'widgets.js'),
   ]) {
-    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /\binset\s*:/, file);
+    const source = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /\binset\s*:/, file);
+    assert.doesNotMatch(styleBlocks(source), /\bgap\s*:/, file);
+    assert.doesNotMatch(styleBlocks(source), /\b[-a-z]+\s*:\s*clamp\(/, file);
   }
 });

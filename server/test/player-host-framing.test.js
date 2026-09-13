@@ -68,13 +68,15 @@ test('a player host lets its own local page frame the player', async () => {
 
 test('the legacy route serves prebuilt player assets without a runtime transform', async () => {
   await withServer({}, async (base) => {
-    const page = await fetch(`${base}/player/legacy?host=webos`);
-    assert.equal(page.status, 200);
-    const html = await page.text();
-    assert.match(html, /window\.__playerConfig/);
-    assert.match(html, new RegExp("const PLAYER_VERSION\\s*=\\s*'" + String(VERSION).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'"));
-    assert.match(html, /live-publish-legacy\.js/);
-    assert.match(html, /talk-legacy\.js/);
+    for (const route of ['/player/legacy', '/player/legacy.html']) {
+      const page = await fetch(`${base}${route}?host=webos`);
+      assert.equal(page.status, 200, route);
+      const html = await page.text();
+      assert.match(html, /window\.__playerConfig/, route);
+      assert.match(html, new RegExp("const PLAYER_VERSION\\s*=\\s*'" + String(VERSION).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'"), route);
+      assert.match(html, /live-publish-legacy\.js/, route);
+      assert.match(html, /talk-legacy\.js/, route);
+    }
     for (const asset of ['/sw-legacy.js', '/player/live-publish-legacy.js', '/player/talk-legacy.js']) {
       const res = await fetch(base + asset);
       assert.equal(res.status, 200, asset);

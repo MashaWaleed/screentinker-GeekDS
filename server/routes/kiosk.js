@@ -126,13 +126,14 @@ router.get('/:id/render', (req, res) => {
   .header p { font-size:${safeNumber(style.subtitleSize, 20)}px; opacity:0.7; margin-top:8px; }
   .header img { max-height:80px; margin-bottom:16px; }
   .content { flex:1; display:flex; align-items:center; justify-content:center; padding:20px 60px; }
-  .button-grid { display:grid; grid-template-columns:repeat(${safeNumber(style.columns, 3)}, 1fr); gap:${safeNumber(style.gap, 24)}px; width:100%; max-width:1200px; }
+  .button-grid { display:grid; grid-template-columns:repeat(${safeNumber(style.columns, 3)}, 1fr); width:100%; max-width:1200px; }
   .kiosk-btn {
     background:${safeColor(style.buttonBg, '#1e293b')}; border:2px solid ${safeColor(style.buttonBorder, '#334155')};
     border-radius:${safeNumber(style.buttonRadius, 16)}px; padding:${safeNumber(style.buttonPadding, 32)}px;
     text-align:center; cursor:pointer; transition:all 0.2s ease; touch-action:manipulation;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; margin:${safeNumber(style.gap, 24) / 2}px;
   }
+  .kiosk-btn > * + * { margin-top:12px; }
   .kiosk-btn:hover, .kiosk-btn:active { background:${safeColor(style.buttonHover, '#3b82f6')}; border-color:${safeColor(style.buttonHover, '#3b82f6')}; transform:scale(1.02); }
   .kiosk-btn .icon { font-size:${safeNumber(style.iconSize, 48)}px; }
   .kiosk-btn .label { font-size:${safeNumber(style.labelSize, 20)}px; font-weight:600; }
