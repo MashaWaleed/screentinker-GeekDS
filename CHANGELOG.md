@@ -4,6 +4,26 @@
 
 ### Fixed
 
+**The audit trail could not tell success from failure.** `activityLogger` gated on
+`res.statusCode < 400`, so a mutation that failed left no row at all — from the data, a playlist
+publish that returned 500 looked exactly like one that never happened. Production carried 12,667
+audited requests and zero recorded failures outside the explicit login-failed event. Requests now
+record the status they actually returned, in a new `activity_log.status_code` column, and failures
+are kept rather than discarded.
+
+The same middleware wrapped `res.json`, so it only ever saw responses that happened to be sent as
+JSON; a route replying with `res.send`, `res.sendStatus`, `res.end` or an unhandled throw was never
+audited at all, which made audit coverage depend on how each handler chose to reply. It now hooks
+`res.on('finish')`, which fires once per response however it was sent and reads the status when it
+is final.
+
+Auditing is gated on ownership: a row is written when the request belongs to an authenticated user
+or a known device, or when it is a 5xx. Anonymous requests are not audited, which matters because
+the public surface is scanned constantly and carries high-frequency anonymous endpoints. That
+property used to hold by accident — an endpoint could opt out by not replying with JSON, and the
+widget telemetry route did exactly that on purpose — so it is now stated and tested rather than
+inherited. One consequence: `POST /api/telemetry/report` is anonymous and is no longer audited.
+
 **Every OTA left a copy of the APK behind, forever.** The update cleanup swept
 `getExternalFilesDir(DIRECTORY_DOWNLOADS)`, but staging tries internal storage first and almost
 always succeeds there, so the downloaded APK sat in a directory cleanup never looked at. One whole

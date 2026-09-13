@@ -1457,6 +1457,19 @@ const migrations = [
    * on node_id; show this to humans and escape it on the way out. */
   'ALTER TABLE mesh_mirror_nodes ADD COLUMN node_name TEXT',
 
+  /* The HTTP status an audited request actually returned.
+   *
+   * ⚠️ ADDED BECAUSE THE AUDIT TRAIL COULD NOT TELL SUCCESS FROM FAILURE. activityLogger gated on
+   * `res.statusCode < 400`, so a mutation that 500'd left NO row at all — identical, from the data,
+   * to one that never happened. On prod that meant 12,667 audited requests and exactly ZERO recorded
+   * failures outside the explicit `auth:login_failed` event: a playlist publish that blew up looked
+   * exactly like one that worked. This column plus the widened gate is what makes "did it break, and
+   * for whom" answerable.
+   *
+   * NULL is meaningful and correct: rows written by the ~49 direct logActivity() callers are named
+   * events ('auth:login_success', 'alert:device_offline'), not HTTP requests, and have no status. */
+  'ALTER TABLE activity_log ADD COLUMN status_code INTEGER',
+
   /* Whether an operator actually CHOSE this server's name, as opposed to inheriting the hostname.
    *
    * ⚠️ A SEPARATE FLAG RATHER THAN COMPARING THE NAME TO os.hostname(). The comparison is wrong in
