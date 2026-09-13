@@ -4,6 +4,20 @@
 
 ### Fixed
 
+**The dashboard never reported a single client-side error.** The player has posted its JavaScript
+errors to a rate-limited sink for a long time; the dashboard posted nothing, so every one of the 201
+error reports on production came from the player. A customer hitting a broken dashboard was
+invisible — the missing `esc` import that left three dialogs dead for weeks, live, behind a green
+test suite, was exactly this shape: a ReferenceError in a click handler that nothing was listening
+for. Uncaught errors and unhandled promise rejections are now captured and sent to the same sink,
+fingerprinted so a repeat is one entry rather than thousands, and visible in the existing admin
+viewer. Failed image and script loads are ignored, since they are asset problems and would drown the
+real faults. The same `PLAYER_DEBUG_REPORTING` kill switch covers it.
+
+⚠️ The reported URL is redacted to origin, path and hash route. The query string is never sent, from
+either the path or the hash: this origin carries single-use credentials there (`?k=` enrol keys,
+`?reset=` password-reset tokens) and the sink is unauthenticated.
+
 **The audit trail could not tell success from failure.** `activityLogger` gated on
 `res.statusCode < 400`, so a mutation that failed left no row at all — from the data, a playlist
 publish that returned 500 looked exactly like one that never happened. Production carried 12,667

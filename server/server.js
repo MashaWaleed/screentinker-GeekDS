@@ -296,8 +296,13 @@ app.get('/app', (req, res) => {
     const brand = publicBranding(resolveBranding(db, { domain: (req.hostname || '').toString() }));
     const attr = JSON.stringify(brand)
       .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Same kill switch as the player (PLAYER_DEBUG_REPORTING), delivered the same way branding is:
+    // the dashboard CSP has no 'unsafe-inline', so a flag cannot ride in an inline <script> the way
+    // it does on the player, whose render paths run without CSP. Absent meta = on.
+    const errorReporting = String(process.env.PLAYER_DEBUG_REPORTING || 'on').toLowerCase() !== 'off';
     const html = fs.readFileSync(file, 'utf8')
-      .replace('</head>', '  <meta name="ssr-brand" content="' + attr + '">\n</head>');
+      .replace('</head>', '  <meta name="ssr-brand" content="' + attr + '">\n'
+        + '  <meta name="st-error-reporting" content="' + (errorReporting ? 'on' : 'off') + '">\n</head>');
     res.type('html').send(html);
   } catch (e) {
     res.sendFile(file);

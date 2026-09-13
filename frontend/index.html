@@ -39,6 +39,9 @@
       </div>
       <!-- #38: apply cached white-label before first paint (no ScreenTinker flash) -->
       <script src="/js/brand-prime.js"></script>
+      <!-- Client-error reporter. Plain script, not a module: a module is deferred and would
+           install its handlers after js/app.js has already booted and thrown. -->
+      <script src="/js/error-reporter.js"></script>
       <div class="workspace-switcher" id="workspaceSwitcher"></div>
     </div>
     <ul class="nav-links">
