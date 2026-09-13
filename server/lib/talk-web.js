@@ -156,7 +156,7 @@
       el.autoplay = true; el.muted = true;
       el.setAttribute('playsinline', '');
       el.__stOverlay = true;
-      el.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2147483000;display:none';
+      el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2147483000;display:none';
       document.body.appendChild(el);
     }
     return el;

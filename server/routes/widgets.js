@@ -586,7 +586,8 @@ function renderWeather(c) {
   .icon { font-size:${Math.max(14, Math.round(safeNumber(c.font_size, 48) * 1.2))}px; line-height:1; }
   /* A signage widget must never offer a scrollbar. If it still does not fit, it clips. */
   html, body { overflow:hidden; }
-  body.horizontal .weather { display:flex; align-items:center; justify-content:center; gap:${Math.max(6, Math.round(safeNumber(c.font_size, 48) * 0.25))}px; text-align:left; }
+  body.horizontal .weather { display:flex; align-items:center; justify-content:center; text-align:left; }
+  body.horizontal .weather > * + * { margin-left:${Math.max(6, Math.round(safeNumber(c.font_size, 48) * 0.25))}px; }
 </style></head><body class="${c.layout === 'horizontal' ? 'horizontal' : ''}">
 <div class="weather">
   <div class="icon" id="icon"></div>
@@ -832,10 +833,10 @@ function renderDirectoryBoard(c) {
   @keyframes bg-pulse { 0%,100% { background:#1a1a2e; } 50% { background:#1b1b30; } }
   @keyframes bg-pulse-light { 0%,100% { background:#f5f5f5; } 50% { background:#ededf0; } }
 
-  .page { position:fixed; inset:0; overflow:hidden; transition: transform 1.5s ease; will-change: transform; }
+  .page { position:fixed; top:0; right:0; bottom:0; left:0; overflow:hidden; transition: transform 1.5s ease; will-change: transform; }
 
-  .bg-layer { position:absolute; inset:0; z-index:0; }
-  .bg-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 2s ease-in-out; }
+  .bg-layer { position:absolute; top:0; right:0; bottom:0; left:0; z-index:0; }
+  .bg-img { position:absolute; top:0; right:0; bottom:0; left:0; width:100%; height:100%; object-fit:cover; opacity:0; transition: opacity 2s ease-in-out; }
   .bg-img.active { opacity:0.30; }
 
   .header {
@@ -877,6 +878,9 @@ function renderDirectoryBoard(c) {
   }
   body.light .category h2 { border-bottom-color: rgba(0,0,0,0.12); }
 
+  /* grid-gap is deliberate: display:grid is itself Chromium 57, so on a Chrome 53 panel this
+     element is an inert block and the gap can never apply. Removing it only cost modern
+     multi-column boards their 36px gutter. See the row-gap note below. */
   .entries { display:grid; gap:14px 36px; }
   .entries[data-cols="auto"] { grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }
   .entries[data-cols="1"] { grid-template-columns: 1fr; }
@@ -884,8 +888,12 @@ function renderDirectoryBoard(c) {
   .entries[data-cols="3"] { grid-template-columns: repeat(3, 1fr); }
   .entries[data-cols="4"] { grid-template-columns: repeat(4, 1fr); }
 
-  .entry { font-size:38px; line-height:1.35; color:#fff; display:flex; gap:14px; align-items:baseline; }
-  .entry .id { font-weight:600; min-width:3.5em; flex-shrink:0; }
+  /* Row gap for engines with no grid support, where .entries lays out as a plain block.
+     @supports is Chromium 28, so a real grid engine zeroes this and uses the gap above rather
+     than double-spacing rows and trailing a margin after the last one. */
+  .entry { font-size:38px; line-height:1.35; color:#fff; display:flex; align-items:baseline; margin-bottom:14px; }
+  @supports (display:grid) { .entry { margin-bottom:0; } }
+  .entry .id { font-weight:600; min-width:3.5em; flex-shrink:0; margin-right:14px; }
   .entry .text { display:flex; flex-direction:column; flex:1; min-width:0; }
   .entry .nm { font-weight:400; }
   .entry .sub { font-size:0.55em; opacity:0.65; margin-top:4px; line-height:1.3; font-weight:400; }
@@ -1232,10 +1240,10 @@ function renderDirectorySearch(c) {
   }
   body.light .group h2 { border-bottom-color:rgba(0,0,0,0.12); }
 
-  .entry { display:flex; gap:14px; align-items:baseline; padding:10px 8px; font-size:30px; line-height:1.3; border-radius:8px; }
+  .entry { display:flex; align-items:baseline; padding:10px 8px; font-size:30px; line-height:1.3; border-radius:8px; }
   .entry:nth-child(even) { background:rgba(255,255,255,0.03); }
   body.light .entry:nth-child(even) { background:rgba(0,0,0,0.03); }
-  .entry .id { font-weight:700; min-width:2.6em; flex-shrink:0; }
+  .entry .id { font-weight:700; min-width:2.6em; flex-shrink:0; margin-right:14px; }
   .entry .text { display:flex; flex-direction:column; flex:1; min-width:0; }
   .entry .nm { font-weight:400; }
   .entry .sub { font-size:0.6em; opacity:0.6; margin-top:3px; }
@@ -1245,15 +1253,15 @@ function renderDirectorySearch(c) {
   /* The keyboard is sized against the VIEWPORT, not in fixed px. A panel's CSS viewport is its
      physical resolution divided by its density, so a 1080p screen at 240dpi presents only 1280x720
      CSS px - and a keyboard laid out for 1920x1080 then eats ~37% of the height instead of ~24%.
-     The vh terms scale it down on short viewports; the clamp() maxima are the original values, so
-     a 1080-tall viewport renders pixel-identically to before (5.3vh and 2.3vh both exceed their
-     max at 1080 and clamp). The px minima keep the keys tappable on very short screens. */
-  .keyboard { flex:0 0 auto; padding:clamp(5px,0.8vh,8px) 12px clamp(8px,1.3vh,14px); background:rgba(0,0,0,0.25); user-select:none; }
+     The viewport rule below scales it down on short screens; the default keeps the original
+     1080px layout and the smallest rule keeps keys tappable on very short screens. */
+  .keyboard { flex:0 0 auto; padding:8px 12px 14px; background:rgba(0,0,0,0.25); user-select:none; }
   body.light .keyboard { background:rgba(0,0,0,0.05); }
-  .krow { display:flex; gap:clamp(4px,0.6vh,6px); justify-content:center; margin-bottom:clamp(4px,0.6vh,6px); }
+  .krow { display:flex; justify-content:center; margin-bottom:6px; }
+  .krow > * + * { margin-left:6px; }
   .key {
     flex:1 1 0; max-width:96px; min-width:0;
-    height:clamp(34px,5.3vh,56px); font-size:clamp(15px,2.3vh,24px); text-transform:uppercase;
+    height:56px; font-size:24px; text-transform:uppercase;
     border:0; border-radius:8px; background:rgba(255,255,255,0.12); color:inherit; cursor:pointer;
   }
   .key:active { background:#4a9eff; color:#fff; }
@@ -1265,7 +1273,18 @@ function renderDirectorySearch(c) {
     .header h1 { font-size:30px; }
     #q { font-size:26px; padding:14px 16px; }
     .entry { font-size:24px; }
-    /* .key is viewport-scaled above - no fixed override here, it would undo the clamp. */
+  }
+  @media (max-height:1050px) {
+    .keyboard { padding:0.8vh 12px 1.3vh; }
+    .krow { margin-bottom:0.6vh; }
+    .krow > * + * { margin-left:0.6vh; }
+    .key { height:5.3vh; font-size:2.3vh; }
+  }
+  @media (max-height:650px) {
+    .keyboard { padding:5px 12px 8px; }
+    .krow { margin-bottom:4px; }
+    .krow > * + * { margin-left:4px; }
+    .key { height:34px; font-size:15px; }
   }
 </style>
 </head>
@@ -1477,7 +1496,8 @@ function renderDiagSmoothness(config) {
   .col{position:absolute;top:0;left:0;width:52%;height:100%;overflow:hidden;border-right:1px solid #20293a}
   .roll{position:absolute;left:0;right:0;top:0;will-change:transform;animation:roll 30s linear infinite}
   @keyframes roll{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,-50%,0)}}
-  .row{display:flex;align-items:center;gap:1.4vw;padding:1.5vh 2vw;border-bottom:1px solid #20293a;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:2.6vh}
+  .row{display:flex;align-items:center;padding:1.5vh 2vw;border-bottom:1px solid #20293a;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:2.6vh}
+  .row > * + *{margin-left:1.4vw}
   .row .n{color:#54a6ff;min-width:3.2em;font-variant-numeric:tabular-nums}
   .row:nth-child(3n) .n{color:#37d391}
   .sweep{position:absolute;top:0;right:0;width:48%;height:100%;background:repeating-linear-gradient(90deg,#0f1420 0 3vw,#182234 3vw 6vw)}
@@ -1487,15 +1507,16 @@ function renderDiagSmoothness(config) {
   .col .tag{left:1.5vw;background:#0a0d13;padding:.4vh .8vw;border-radius:4px}
   .sweep .tag{right:1.5vw}
   .hud{position:absolute;left:50%;bottom:3vh;transform:translateX(-50%);background:rgba(12,16,24,.94);border:1px solid #20293a;border-radius:14px;padding:2.2vh 2.4vw;min-width:64vw;z-index:6;box-shadow:0 1.4vh 4vh rgba(0,0,0,.55)}
-  .verdict{display:flex;align-items:center;gap:1.4vw;margin-bottom:1.8vh}
+  .verdict{display:flex;align-items:center;margin-bottom:1.8vh}
+  .verdict > * + *{margin-left:1.4vw}
   .dot{width:1.8vh;height:1.8vh;border-radius:50%;background:#6d7789}
   .verdict.smooth .dot{background:#37d391;box-shadow:0 0 0 .6vh rgba(55,211,145,.16)}
   .verdict.stall .dot{background:#ff5d5d;box-shadow:0 0 0 .6vh rgba(255,93,93,.18)}
   .verdict .txt{font-size:3.4vh;font-weight:750;letter-spacing:.01em}
   .verdict.smooth .txt{color:#37d391}.verdict.stall .txt{color:#ff5d5d}
   .verdict .sub{font-size:1.9vh;color:#6d7789;font-weight:400;margin-left:auto;text-align:right}
-  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw;margin-bottom:1.4vh}
-  .stat{background:#121826;border:1px solid #20293a;border-radius:10px;padding:1.2vh 1vw}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:1.4vh}
+  .stat{background:#121826;border:1px solid #20293a;border-radius:10px;padding:1.2vh 1vw;margin:0 .6vw}
   .stat .k{font-size:1.4vh;text-transform:uppercase;letter-spacing:.08em;color:#6d7789}
   .stat .v{font-family:ui-monospace,Menlo,monospace;font-size:4vh;font-variant-numeric:tabular-nums;margin-top:.4vh}
   .stat .v small{font-size:1.8vh;color:#6d7789}

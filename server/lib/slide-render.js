@@ -1003,10 +1003,10 @@ function renderSlideHtml(rawConfig, opts = {}) {
            background:${slide.background}; container-type:size; }
   .e { position:absolute; }
   /* Both fill the stage and sit beneath every element, in source order: photo, then scrim. */
-  .bg { position:absolute; inset:0; background-size:cover; background-position:center; }
+  .bg { position:absolute; top:0; right:0; bottom:0; left:0; background-size:cover; background-position:center; }
   /* A video background fills the frame the way the still does, and is never letterboxed. */
   video.bg { width:100%; height:100%; object-fit:cover; display:block; }
-  .scrim { position:absolute; inset:0; }
+  .scrim { position:absolute; top:0; right:0; bottom:0; left:0; }
   .t { line-height:1.08; white-space:pre-wrap; word-break:break-word; }
   .e img { width:100%; height:100%; object-fit:cover; display:block; }
   /* A cut-out must fit inside its box, not be cropped to fill it. See IMAGE_FITS. */
