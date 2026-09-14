@@ -106,6 +106,11 @@ function deviceCard(d) {
   const guide = d.provisioning_url
     ? `\n        <p class="setup-link"><a href="${esc(d.provisioning_url)}">Setup guide for this device</a></p>`
     : '';
+  // Affiliate/where-to-buy link. rel="sponsored nofollow" is the honest tag for a paid link and the
+  // one search engines ask for; it opens in a new tab so it does not navigate away from the list.
+  const buy = d.buy_url
+    ? `\n        <p class="buy-link"><a href="${esc(d.buy_url)}" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>`
+    : '';
   return `      <article class="device" id="${esc(d.id)}">
         <h3><a class="anchor" href="#${esc(d.id)}" aria-label="Link to ${esc(d.name)}">#</a>${esc(d.name)}</h3>
         <dl class="device-spec">
@@ -113,7 +118,7 @@ ${rows.map(([k, v]) => `          <dt>${esc(k)}</dt><dd>${v}</dd>`).join('\n')}
         </dl>${notes ? `
         <ul class="device-notes">
 ${notes}
-        </ul>` : ''}${guide}
+        </ul>` : ''}${guide}${buy}
       </article>`;
 }
 
@@ -187,6 +192,9 @@ function render(data) {
     .device-notes { margin: 16px 0 0; padding-left: 20px; color: var(--text); font-size: 14px; }
     .device-notes li { margin: 6px 0; }
     .setup-link { margin: 14px 0 0; font-size: 14px; }
+    .buy-link { margin: 8px 0 0; font-size: 14px; }
+    .buy-link .affiliate-tag { color: var(--dim); font-size: 12px; }
+    .affiliate-notice { color: var(--muted); font-size: 13px; margin: 20px 0 0; }
     .unknown { color: var(--dim); font-style: italic; }
     .callout { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
       border-radius: 8px; padding: 18px 20px; margin: 24px 0; }
@@ -251,6 +259,11 @@ function render(data) {
         statement about what ScreenTinker has tested and will support, not about what is capable of
         running the software.</p>
     </div>
+
+    <p class="affiliate-notice"><strong>Affiliate links.</strong> Some device cards below include a
+      "Buy this device" link that is an affiliate link. If you buy through one, ScreenTinker may earn a
+      commission at no extra cost to you. This has no bearing on what gets certified or how it is
+      tested: certification is decided on the bench, never by whether a link earns anything.</p>
 
 ${sections}
 
