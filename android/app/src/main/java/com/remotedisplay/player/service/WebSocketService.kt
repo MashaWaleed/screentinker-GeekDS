@@ -152,6 +152,10 @@ class WebSocketService : Service() {
         super.onCreate()
         config = ServerConfig(this)
         deviceInfo = DeviceInfo(this)
+        // An OTA restarts the app, which drops MediaProjection consent and silently downgrades the
+        // live view to the player's own window. Re-arm it here when this panel had it and can
+        // regrant without a dialog. No-op otherwise; see restoreIfPreviouslyGranted for why.
+        com.remotedisplay.player.ScreenCapturePermissionActivity.restoreIfPreviouslyGranted(this)
         // #5: claim ONLY the mediaPlayback FGS type. The 2-arg startForeground
         // claims every manifest-declared type, and on Android 14+ claiming
         // mediaProjection without a consent token throws and kills the service at
@@ -839,7 +843,7 @@ class WebSocketService : Service() {
                     put("pairing_code", pairingCode)
                     config.deviceId = ""
                 }
-                try { put("device_info", deviceInfo.getDeviceInfo()) } catch (e: Throwable) { Log.w("WebSocketService", "device_info: ${e.message}") }
+                try { put("device_info", deviceInfoPayload()) } catch (e: Throwable) { Log.w("WebSocketService", "device_info: ${e.message}") }
                 try { put("fingerprint", deviceInfo.getFingerprint()) } catch (e: Throwable) { Log.w("WebSocketService", "fingerprint: ${e.message}") }
                 putIdentity()
             }
@@ -860,7 +864,7 @@ class WebSocketService : Service() {
             if (id.isEmpty() || socket?.connected() != true) return
             socket?.emit("device:info", org.json.JSONObject().apply {
                 put("device_id", id)
-                put("device_info", deviceInfo.getDeviceInfo())
+                put("device_info", deviceInfoPayload())
             })
         } catch (e: Throwable) { Log.w("WebSocketService", "reportInfoNow: ${e.message}") }
     }
@@ -1042,7 +1046,7 @@ class WebSocketService : Service() {
                 put("device_id", config.deviceId)
                 val token = config.deviceToken
                 if (token.isNotEmpty()) put("device_token", token)
-                try { put("device_info", deviceInfo.getDeviceInfo()) } catch (e: Throwable) { Log.w("WebSocketService", "device_info: ${e.message}") }
+                try { put("device_info", deviceInfoPayload()) } catch (e: Throwable) { Log.w("WebSocketService", "device_info: ${e.message}") }
                 putIdentity()
             }
             socket?.emit("device:register", data)
@@ -1141,6 +1145,24 @@ class WebSocketService : Service() {
 
     // Callback for Activity to provide screenshot
     var onCaptureScreenshot: (() -> String?)? = null
+
+    /** The tier the NEXT capture would use. Reported in telemetry so the dashboard can say why a
+     *  screenshot shows only the playlist. Must stay in step with captureScreen() below. */
+    fun currentCaptureMode(): CaptureMode = CaptureMode.current(onCaptureScreenshot != null)
+
+    /**
+     * The device_info payload, plus the capture tier this service is actually able to use.
+     *
+     * ⚠️ ONE builder for all THREE emit sites (register, re-register, heartbeat). capture_mode is
+     * added here rather than inside DeviceInfo because this service owns the capture decision, and
+     * routed through a single function because the payload is emitted from more than one place —
+     * adding the field at one call site is how a panel ends up reporting a capture mode on connect
+     * and none on the next heartbeat.
+     */
+    private fun deviceInfoPayload(): org.json.JSONObject =
+        deviceInfo.getDeviceInfo().apply {
+            try { put("capture_mode", currentCaptureMode().wire) } catch (_: Throwable) { /* best-effort */ }
+        }
 
     private fun captureScreen(): String? {
         // Priority 1: MediaProjection (system-wide, works in background) — needs operator consent.

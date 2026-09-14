@@ -176,12 +176,14 @@ function applyDeviceInfo(deviceId, di) {
   } catch (_) { /* incident feed is best-effort */ }
   db.prepare(`UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ?,
     ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
-    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?,
+    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, capture_mode = ?,
     media_volume = ?, system_brightness = ?, window_brightness = ?, screen_off_timeout_ms = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
     .run(di.android_version, di.app_version, di.screen_width, di.screen_height, di.render_width ?? null, di.render_height ?? null,
       di.ota_status ?? 'none', di.ota_target_version ?? null, di.ota_attempts ?? 0,
       Number.isInteger(di.tier) ? di.tier : 0, di.foreign_device_owner ? 1 : 0,
       di.can_write_settings ? 1 : 0, di.accessibility_enabled ? 1 : 0, di.overlay_granted ? 1 : 0,
+      // Absent (older build, non-Android player) must stay NULL rather than become a bogus tier.
+      ['projection', 'accessibility', 'view', 'none'].includes(di.capture_mode) ? di.capture_mode : null,
       num(di.media_volume), num(di.system_brightness), num(di.window_brightness), num(di.screen_off_timeout_ms),
       deviceId);
 }

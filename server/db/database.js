@@ -1470,6 +1470,19 @@ const migrations = [
    * events ('auth:login_success', 'alert:device_offline'), not HTTP requests, and have no status. */
   'ALTER TABLE activity_log ADD COLUMN status_code INTEGER',
 
+  /* Which screen-capture tier a panel can actually use: projection | accessibility | view | none.
+   *
+   * ⚠️ ADDED BECAUSE THE LIVE VIEW DEGRADES SILENTLY. MediaProjection consent does not survive the
+   * app restarting and an OTA restarts the app, so a panel drops from whole-screen capture to
+   * drawing only the player's own window — the remote view shows the playlist and goes blank over
+   * Settings, with no error and nothing anywhere saying why. A customer reported exactly that after
+   * an update, on two panels at once, and the only way to tell was to infer it from the pictures.
+   * Recording the tier makes it a state the dashboard can show and an operator can act on.
+   *
+   * NULL means "this panel has not told us" — every non-Android player, and any Android build older
+   * than this column. Do not render NULL as a fault. */
+  "ALTER TABLE devices ADD COLUMN capture_mode TEXT",
+
   /* Whether an operator actually CHOSE this server's name, as opposed to inheriting the hostname.
    *
    * ⚠️ A SEPARATE FLAG RATHER THAN COMPARING THE NAME TO os.hostname(). The comparison is wrong in

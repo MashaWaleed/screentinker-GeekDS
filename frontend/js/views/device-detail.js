@@ -248,6 +248,36 @@ function isBrightSignDevice(device) {
   return String(device.platform || '').toLowerCase().includes('brightsign');
 }
 
+/*
+ * Say which capture tier a panel is actually on, and what to do about it.
+ *
+ * ⚠️ WHY THIS IS HERE. The live view degrades silently. MediaProjection consent does not survive
+ * the app restarting, and an OTA restarts the app — so a panel that showed its whole screen starts
+ * drawing only the player's own window. The symptom is "the remote view shows the playlist and goes
+ * blank when I open Settings", with nothing anywhere to explain it. A customer hit exactly that on
+ * two panels after one update, and had no way to tell it from a broken screenshot.
+ *
+ * Accessibility is the tier worth steering people to: it captures the whole screen, needs no consent
+ * dialog, and SURVIVES updates. It cannot be switched on remotely — no device-policy API can enable
+ * an accessibility service, not even for a device owner — so the nudge has to be a human instruction.
+ *
+ * capture_mode is NULL for every non-Android player and for Android builds older than the field.
+ * Absent is not a fault; say nothing rather than invent a state.
+ */
+function captureModeNotice(device) {
+  const mode = device && device.capture_mode;
+  if (!mode || mode === 'accessibility') return '';   // unknown, or already on the durable path
+  const line = (colour, text) =>
+    `<span style="font-size:10px;color:${colour};line-height:1.3;display:block;margin-top:6px">${text}</span>`;
+  if (mode === 'projection') {
+    return line('var(--text-muted)', t('device.remote.capture_projection'));
+  }
+  if (mode === 'view') {
+    return line('var(--warning)', t('device.remote.capture_view'));
+  }
+  return line('var(--warning)', t('device.remote.capture_none'));
+}
+
 // Mirrors platformFamily() in server/lib/player-capabilities.js — SAME FOUR SIGNALS, SAME ORDER,
 // so the UI and the server never disagree about what a device is.
 //
@@ -1053,7 +1083,8 @@ async function loadDevice(deviceId, activeTab = null) {
             <button class="btn btn-primary btn-sm" id="enableSystemCaptureBtn" onclick="window._enableSystemView()" title="${t('device.remote.system_view_tooltip')}" style="margin-top:8px">
               ${t('device.remote.enable_system_view')}
             </button>
-            <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>` : ''}`}
+            <span id="systemViewHint" style="font-size:10px;color:var(--text-muted);line-height:1.2;display:block;margin-top:4px">${t('device.remote.system_view_hint')}</span>` : ''}
+            ${captureModeNotice(device)}`}
           </div>
         </div>
       </div>` : ''}
