@@ -50,8 +50,21 @@ class ScreenCapturePermissionActivity : Activity() {
         private const val PREF_AUTO_RESTORE = "screen_capture_auto_restore"
         /** How long a SILENT grant is allowed to take before we conclude a dialog is on screen. */
         private const val SILENT_GRANT_WINDOW_MS = 1500L
-        @Volatile var restoreAttempt: Boolean = false
-            private set
+
+        /**
+         * ⚠️ THE PROBE ROLE TRAVELS ON THE LAUNCH INTENT, NOT IN A SHARED FLAG.
+         *
+         * It was a process-wide `restoreAttempt` boolean, and that was wrong in two ways, both of
+         * which broke the LIVE-VIDEO path rather than the restore it was written for. This activity
+         * has the default launchMode, so every request starts a NEW instance: a `device:live-publish`
+         * arriving while a restore was in flight got its own onCreate, read the flag as still true,
+         * and withdrew the OPERATOR'S consent dialog 1500ms later — live video failing to start,
+         * silently, for a reason nothing logged. And a denied result never cleared the flag, so one
+         * cancelled restore armed the probe over every later request for the life of the process.
+         *
+         * An extra on the intent cannot be read by a launch that did not carry it.
+         */
+        private const val EXTRA_PROBE = "silent_restore_probe"
 
         fun restoreIfPreviouslyGranted(context: Context) {
             try {
@@ -68,9 +81,19 @@ class ScreenCapturePermissionActivity : Activity() {
                         "not raising a consent dialog over live content — the dashboard will show capture_mode=view")
                     return
                 }
+                // ⚠️ NOT via requestPermission(): it clears pendingLive, so a restore landing while
+                // a live publish is being set up would route that grant to the screenshot service
+                // and the publish would never start. A restore is the lowest-priority request here —
+                // if live video is already asking, leave it alone and let its grant stand.
+                if (pendingLive != null) {
+                    Log.i(TAG, "a live-video publish is already requesting consent; leaving it to that grant")
+                    return
+                }
                 Log.i(TAG, "attempting a silent re-arm of system capture after restart")
-                restoreAttempt = true
-                requestPermission(context)
+                context.startActivity(Intent(context, ScreenCapturePermissionActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    putExtra(EXTRA_PROBE, true)
+                })
             } catch (e: Throwable) {
                 Log.w(TAG, "restoreIfPreviouslyGranted: ${e.message}")
             }
@@ -106,8 +129,17 @@ class ScreenCapturePermissionActivity : Activity() {
         }
     }
 
+    /** Whether THIS launch is an automatic restore. Read from the intent, never from shared state. */
+    private var isProbe = false
+    /** Whether THIS request got its result. ⚠️ NOT Companion.hasPermission, which is sticky across
+     *  the whole process: after any earlier grant it reads true forever, so the probe would decide a
+     *  dialog it can see on screen had already been answered and leave it parked — the exact failure
+     *  the probe exists to prevent. */
+    private var resultArrived = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        isProbe = intent?.getBooleanExtra(EXTRA_PROBE, false) == true
         val mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(mediaProjectionManager.createScreenCaptureIntent(), REQUEST_CODE)
         // Only arms for an automatic restore; an operator-initiated request is left to run normally.
@@ -129,14 +161,13 @@ class ScreenCapturePermissionActivity : Activity() {
      * dialog is expected there, and someone is looking at the panel.
      */
     private fun armSilentGrantProbe() {
-        if (!restoreAttempt) return
+        if (!isProbe) return
         window.decorView.postDelayed({
-            if (!isFinishing && !Companion.hasPermission) {
+            if (!isFinishing && !resultArrived) {
                 Log.w(TAG, "silent re-arm did not complete within ${SILENT_GRANT_WINDOW_MS}ms — a consent " +
                     "dialog is on screen. Withdrawing it and disabling automatic restore on this panel.")
                 getSharedPreferences("remote_display", MODE_PRIVATE)
                     .edit().putBoolean(PREF_AUTO_RESTORE, false).apply()
-                restoreAttempt = false
                 // ⚠️ finish() alone is NOT enough and was verified not to be: the consent dialog is
                 // systemui's own activity, started for a result INTO OUR TASK, so finishing this
                 // activity leaves the dialog sitting on top of the player exactly as before.
@@ -149,6 +180,9 @@ class ScreenCapturePermissionActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQUEST_CODE) {
+            // Before any branch: the probe asks "did THIS request get an answer", and a denial is
+            // an answer. Recording it only on success is what left the old flag armed forever.
+            resultArrived = true
             if (resultCode == RESULT_OK && data != null) {
                 Log.i(TAG, "MediaProjection permission granted, starting via service")
 
@@ -174,7 +208,6 @@ class ScreenCapturePermissionActivity : Activity() {
                     // A result that arrived inside the probe window means this panel grants silently,
                     // so keep automatic restore on. Outside it, the probe has already turned it off.
                     .apply()
-                restoreAttempt = false
             } else {
                 Log.w(TAG, "MediaProjection permission denied")
             }

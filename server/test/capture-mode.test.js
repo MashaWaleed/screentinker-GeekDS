@@ -65,8 +65,11 @@ test('restore-on-start is gated on device owner, so no dialog lands over live co
   assert.match(fn, /screen_capture_granted/, 'it reads the flag that was previously write-only');
   assert.match(fn, /isDeviceOwner\(\)/, 'and only re-requests where the grant is dialog-free');
   const guard = fn.indexOf('isDeviceOwner()');
-  const request = fn.indexOf('requestPermission(context)');
-  assert.ok(guard > 0 && guard < request, 'the ownership check comes BEFORE the request');
+  // The restore launches the activity directly rather than via requestPermission(), which would
+  // clear a pending live-video request — see the publish test below.
+  const request = fn.indexOf('context.startActivity');
+  assert.ok(guard > 0 && request > 0 && guard < request,
+    'the ownership check comes BEFORE the launch');
 });
 
 test('the dashboard notice fires on exactly the tiers that need it', () => {
@@ -123,5 +126,47 @@ test('⚠️ a failed silent re-arm WITHDRAWS the dialog, and finish() alone doe
   assert.match(body, /putBoolean\(PREF_AUTO_RESTORE, false\)/,
     'a panel that raised a dialog never auto-retries');
   // The probe must not fire for an operator-initiated request; someone is looking at that panel.
-  assert.match(body, /if \(!restoreAttempt\) return/);
+  assert.match(body, /if \(!isProbe\) return/);
+  // ⚠️ The timeout asks whether THIS request was answered. It used to read Companion.hasPermission,
+  // which is sticky for the life of the process: after any earlier grant it reads true forever, so
+  // the probe would conclude that a dialog it can see had already been answered and leave it parked.
+  assert.match(body, /!resultArrived/);
+  assert.doesNotMatch(body, /Companion\.hasPermission/);
+});
+
+test('⚠️ the probe cannot be inherited by a live-video request', () => {
+  // This activity has the default launchMode, so every request starts a NEW instance. When the probe
+  // role lived in a process-wide flag, a device:live-publish arriving while a restore was in flight
+  // read that flag as still true and withdrew the OPERATOR'S consent dialog 1500ms later — live
+  // video failing to start, silently. The role now travels on the launch intent instead.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'android', 'app', 'src', 'main', 'java', 'com',
+      'remotedisplay', 'player', 'ScreenCapturePermissionActivity.kt'), 'utf8');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
+
+  assert.doesNotMatch(code, /restoreAttempt/, 'no process-wide flag decides who is a probe');
+  assert.match(code, /isProbe = intent\?\.getBooleanExtra\(EXTRA_PROBE, false\)/,
+    'the role is read from the launch that carried it');
+  // Only the restore path may set it. requestPermission (the dashboard button) and requestForLive
+  // must not, or their dialogs get withdrawn under the operator.
+  assert.equal((code.match(/putExtra\(EXTRA_PROBE/g) || []).length, 1,
+    'exactly one launch site marks itself a probe');
+  const restore = code.slice(code.indexOf('fun restoreIfPreviouslyGranted'), code.indexOf('fun requestPermission'));
+  assert.match(restore, /putExtra\(EXTRA_PROBE, true\)/, 'and it is the automatic restore');
+});
+
+test('⚠️ an automatic restore never steals a live-video publish', () => {
+  // requestPermission() clears pendingLive, so a restore routed through it while a live publish was
+  // being set up sent that grant to the screenshot service and the publish never started. A restore
+  // is the lowest-priority request here: if live video is already asking, it stands aside.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'android', 'app', 'src', 'main', 'java', 'com',
+      'remotedisplay', 'player', 'ScreenCapturePermissionActivity.kt'), 'utf8');
+  const restore = src.slice(src.indexOf('fun restoreIfPreviouslyGranted'), src.indexOf('fun requestPermission'));
+  const code = restore.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
+
+  assert.match(code, /if \(pendingLive != null\)[\s\S]*?return/, 'it stands aside for a pending publish');
+  assert.doesNotMatch(code, /requestPermission\(context\)/, 'and does not route through the path that clears it');
+  assert.ok(code.indexOf('pendingLive != null') < code.indexOf('startActivity'),
+    'the check comes BEFORE the launch');
 });
