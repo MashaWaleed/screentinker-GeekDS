@@ -40,6 +40,8 @@
     "                 very first release and has no floor. Do not 'tidy' it to null — null renders as",
     "                 \"Not recorded\", which says the opposite of what is true.",
     "  provisioning_url  link to the setup guide for this device, or null",
+    "  buy_url        affiliate / where-to-buy link (https URL) shown as a \"Buy this device\" link,",
+    "                 or null. Marked rel=sponsored nofollow and disclosed as affiliate on the page.",
     "  notes          array of short strings: gotchas, limitations, required settings",
     "  eol            manufacturer end-of-life date if announced, else null",
     "",
@@ -54,7 +56,7 @@
     "Order within a status group is the order of this array. Groups are ordered by the list above."
   ],
 
-  "last_updated": "2026-09-13",
+  "last_updated": "2026-09-14",
 
   "devices": [
     {
@@ -72,6 +74,7 @@
       "player_version": "1.9.1",
       "min_version": "1.9.1",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
+      "buy_url": "https://amzn.to/4A422nY",
       "notes": [
         "The primary recommendation for a new installation.",
         "Validated at 1920x1080. The device supports higher output, but 4K signage playback has not been validated and is not covered.",
@@ -94,6 +97,7 @@
       "player_version": "1.9.33",
       "min_version": "1.9.33",
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "The player code is the ordinary web player, unmodified. The BrightSign-specific part is the host around it: autorun.brs owns the widget lifecycle, identity across reboots, recovery from a dead server, and video-mode and multi-output control, with st-bridge.js as the page's half of that contract. This package has to be installed on the player.",
         "BrightSign's HTML widget does not reliably come back from a page reload. That is why the host exists: on deploy the page asks for a restart and autorun.brs tears the widget down and builds a new one, which is a restart the operating system actually performs. Without that host a deploy can darken the panel until someone power-cycles it.",
@@ -116,6 +120,7 @@
       "player_version": "1.9.36",
       "min_version": "1.9.36",
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "This is the whole system on one box: no separate server to host, and the panel keeps working if the network does not.",
         "BrightSign OS 10 is required, and is not optional. The server runs on the Node runtime that ships with OS 10. OS 9 can run the player but cannot run the server.",
@@ -141,6 +146,7 @@
       "player_version": "1.9.4",
       "min_version": "1.9.4",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
+      "buy_url": null,
       "notes": [
         "The panel is 1280x800. It was tested with 1080p content, which the device downscales to fit, so a 1080p playlist plays correctly but is not shown at full resolution.",
         "Requires ScreenTinker 1.9.4 or later. Earlier Android builds could strand a panel on \"waiting for content\" after a restart, with no recovery short of clearing the app and re-provisioning (issue #162, fixed 2026-07-10)."
@@ -162,6 +168,7 @@
       "player_version": "2.0.9",
       "min_version": "0.0.1",
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "Tested on Chrome and Firefox. Edge is expected to work but has not been tested.",
         "Point the browser at /player on your server. Nothing is installed.",
@@ -185,6 +192,7 @@
       "player_version": "2.0.8",
       "min_version": "2.0.8",
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "ScreenTinker holds no Tizen hardware. This entry rests on user reports and carries no support commitment.",
         "Tizen is not turnkey. There are three install routes and each has a catch.",
@@ -212,6 +220,7 @@
       "player_version": null,
       "min_version": "2.0.8",
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "Community contributed. No LG panel was available to ScreenTinker, so no unit is held in the lab and this carries no support commitment.",
         "Installed from a USB stick or an SI server. No vendor signature is needed.",
@@ -235,6 +244,7 @@
       "player_version": null,
       "min_version": "2.0.8",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
+      "buy_url": null,
       "notes": [
         "Android TV hardware in general is not certified. Individual models are listed separately when ScreenTinker has tested them.",
         "With group sync enabled the player warms the next clip on a second video decoder shortly before each item boundary. Some chipsets allow only one decoder at higher profiles, and the second request can reclaim the decoder already playing. The picture holds, no error is raised, and the playlist stops advancing.",
@@ -257,6 +267,7 @@
       "player_version": null,
       "min_version": null,
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.",
         "Memory on the device is not sufficient for reliable signage playback.",
@@ -280,6 +291,7 @@
       "player_version": null,
       "min_version": null,
       "provisioning_url": null,
+      "buy_url": null,
       "notes": [
         "Vega OS restricts video playback to 720p, so this cannot drive a 1080p sign at full resolution.",
         "Memory on the device is not sufficient for reliable signage playback.",

@@ -30,7 +30,7 @@ const STATUSES = ['certified', 'certified-with-limits', 'community-reported', 'k
 const CATEGORIES = ['streaming-player', 'soc-display', 'media-player', 'browser', 'sbc'];
 const FIELDS = ['id', 'name', 'manufacturer', 'model_numbers', 'category', 'os', 'player', 'status',
   'max_resolution', 'validated_on', 'validated_by', 'player_version', 'min_version',
-  'provisioning_url', 'notes', 'eol'];
+  'provisioning_url', 'buy_url', 'notes', 'eol'];
 
 const CERTIFIED = ['certified', 'certified-with-limits'];
 
@@ -141,6 +141,12 @@ test('dates are ISO, and versions and links have the shape the page assumes', ()
     if (d.model_numbers != null) {
       assert.ok(Array.isArray(d.model_numbers) && d.model_numbers.length > 0,
         `${d.id}.model_numbers must be a non-empty array or null, never an empty array`);
+    }
+    // A buy link is an EXTERNAL affiliate link, so it must be an absolute https URL (never a
+    // site-relative path like provisioning_url can be). The page discloses it as affiliate and tags
+    // it rel="sponsored nofollow"; this just keeps a malformed link out of the contract-named page.
+    if (d.buy_url != null) {
+      assert.match(d.buy_url, /^https:\/\/\S+$/, `${d.id}.buy_url must be an absolute https URL or null`);
     }
   }
   assert.match(data.last_updated, /^\d{4}-\d{2}-\d{2}$/, 'last_updated is not an ISO date');
