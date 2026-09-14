@@ -4,6 +4,13 @@
 
 ### Added
 
+**A public Certified Hardware list, at `/certified-hardware`.** The device models that have been
+tested, what each one actually does rather than what the box claims, which are only community
+reported, and which are not supported and why. Reseller agreements point at this page, so entries
+that carry a support obligation live in a data file in the repository and reach the page only
+through a commit. Anyone can report hardware that works for them, and an approved report is
+published alongside, clearly marked as untested and carrying no support commitment.
+
 **LG webOS 4, 5 and 6 panels can run the player.** They ship browser engines older than the player's
 JavaScript needs, so until now they loaded nothing; the documentation said as much. The server now
 serves a second copy of the player at a separate address, transpiled ahead of time for those older
@@ -20,6 +27,20 @@ bounds preserved rather than approximated, so modern panels look identical. Cont
 MashaWaleed.
 
 ### Fixed
+
+**The live view degraded silently after every update, and nothing said so.** Screen-capture consent
+does not survive the app restarting, and an update restarts the app. The flag recording that a panel
+had been granted whole-screen capture had been written since the feature shipped and was never read,
+so every update quietly dropped a panel to drawing only the player's own window: the remote view
+showed the playlist and went blank over Settings, with no error anywhere. A customer reported exactly
+that on two panels after one update. Panels now report which capture tier they are actually on, the
+dashboard explains it and points at the accessibility service, which captures the whole screen and
+survives updates, and the grant re-arms itself on restart where that can be done without a dialog.
+
+⚠️ Being the device owner does not guarantee a silent grant, which is an OEM decision rather than
+something ownership implies. So an automatic restore is a probe: if a consent dialog appears it is
+withdrawn within a second and a half and that panel never asks again, because a dialog left sitting
+over live signage with nobody there is worse than the degraded capture it was trying to fix.
 
 **The dashboard never reported a single client-side error.** The player has posted its JavaScript
 errors to a rate-limited sink for a long time; the dashboard posted nothing, so every one of the 201

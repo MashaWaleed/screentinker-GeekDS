@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "2.0.10",
+      "date": "2026-09-14",
+      "notes": [
+        "A published list of hardware that works, at screentinker.com/certified-hardware. It says which devices have been tested, what resolution each one really runs at, and which ones to avoid. You can report hardware you are running and it will be listed once it is reviewed.",
+        "Screens stopped losing full-screen capture after an update. The remote view used to fall back to showing only the playlist, going blank over Settings, with nothing to explain it. The screen page now tells you which kind of capture a panel is using and how to make it stick.",
+        "The Android app download is 44% smaller, which matters most on slow or metered connections.",
+        "LG webOS 4, 5 and 6 panels can now run the player. Older panels that loaded nothing before will work, and anything too old to run it now says so instead of showing a black screen.",
+        "The activity log now records failed changes as well as successful ones, so a change that did not work is no longer indistinguishable from one that never happened."
+      ]
+    },
+    {
       "version": "2.0.9",
       "date": "2026-09-12",
       "notes": [
