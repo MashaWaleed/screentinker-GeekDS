@@ -97,7 +97,7 @@
       "player_version": "1.9.33",
       "min_version": "1.9.33",
       "provisioning_url": null,
-      "buy_url": null,
+      "buy_url": "https://amzn.to/4xmzSSA",
       "notes": [
         "The player code is the ordinary web player, unmodified. The BrightSign-specific part is the host around it: autorun.brs owns the widget lifecycle, identity across reboots, recovery from a dead server, and video-mode and multi-output control, with st-bridge.js as the page's half of that contract. This package has to be installed on the player.",
         "BrightSign's HTML widget does not reliably come back from a page reload. That is why the host exists: on deploy the page asks for a restart and autorun.brs tears the widget down and builds a new one, which is a restart the operating system actually performs. Without that host a deploy can darken the panel until someone power-cycles it.",
