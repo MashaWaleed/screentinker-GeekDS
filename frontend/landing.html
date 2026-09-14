@@ -139,6 +139,10 @@
 
     /* Footer */
     footer { max-width:1200px; margin:0 auto; padding:40px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; border-top:1px solid var(--border); }
+    /* The footer's links grid is a flex item; without this it keeps its min-content width (~1076px,
+       all columns at their 180px min) and refuses to shrink, so its auto-fit never collapses and the
+       page scrolls sideways below ~1080px. min-width:0 lets it shrink so auto-fit fits the viewport. */
+    footer > div { min-width:0; }
     footer .links a { color:var(--dim); margin-left:16px; font-size:13px; }
 
     /* Horizontal-scroll wrapper for wide tables on mobile */
@@ -164,6 +168,11 @@
       .compare-table { font-size:12px; min-width:560px; }
       .compare-table th, .compare-table td { padding:8px; }
       footer { flex-direction:column; text-align:center; }
+      /* The footer's auto-fit grid did not collapse on a phone: it stayed 5 columns (~1076px) and
+         overflowed the viewport. That horizontal overflow is what pushed the fixed nav (and its
+         Sign In / Start Free buttons) off the right of the screen on mobile. Force two columns so
+         the page never scrolls sideways. !important beats the element's inline grid-template. */
+      footer > div { grid-template-columns:repeat(2,minmax(0,1fr)) !important; text-align:left; }
 
       /* 44px tap targets for all buttons on mobile */
       .btn { min-height:44px; }
@@ -210,6 +219,9 @@
       </a>
       <a href="#compare" class="btn btn-outline" style="padding:14px 28px;font-size:16px">See How We Compare</a>
     </div>
+
+    <p style="margin-top:18px;font-size:14px;color:var(--muted)">Not sure what to run it on?
+      <a href="/certified-hardware" style="color:var(--accent)">See certified hardware &rarr;</a></p>
 
     <!-- Live deployment count. Hidden until the number arrives, so a self-hosted instance (where
          the endpoint does not exist) and a brand-new one (where the count is 0) show nothing at
@@ -443,6 +455,7 @@
       <div>
         <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Guides</div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+          <a href="/certified-hardware" style="color:var(--muted)">Certified hardware</a>
           <a href="/guides/raspberry-pi-digital-signage.html" style="color:var(--muted)">Raspberry Pi setup</a>
           <a href="/guides/digital-signage-android-tv.html" style="color:var(--muted)">Android TV &amp; Fire TV</a>
           <a href="/guides/self-hosted-digital-signage.html" style="color:var(--muted)">Self-hosting guide</a>
