@@ -117,5 +117,23 @@ test('player-rendered HTML uses layout CSS supported by Chrome 53', () => {
     // that support the flexbox around it.
     assert.doesNotMatch(styleBlocks(source).replace(/\.entries \{[^}]*\}/g, ''), /\bgap\s*:/, file);
     assert.doesNotMatch(styleBlocks(source), /\b[-a-z]+\s*:\s*clamp\(/, file);
+
+    // ⚠️ The sweep that made this player Chrome 53-safe replaced FOUR features, and only three of
+    // them were pinned here — so `aspect-ratio` could come back silently, exactly the way the
+    // `.entries` column gutter went missing without anything noticing. Pin the rest of the sweep,
+    // plus the near neighbours a new rule is most likely to reach for.
+    for (const [pattern, chrome, what] of [
+      [/\baspect-ratio\s*:/, 88, 'aspect-ratio'],
+      [/\b[-a-z]+\s*:\s*min\(/, 79, 'min()'],
+      [/\b[-a-z]+\s*:\s*max\(/, 79, 'max()'],
+      [/:is\(/, 88, ':is()'],
+      [/:where\(/, 88, ':where()'],
+      [/\bbackdrop-filter\s*:/, 76, 'backdrop-filter'],
+      [/\bcolumn-gap\s*:/, 84, 'column-gap'],
+      [/\brow-gap\s*:/, 84, 'row-gap'],
+    ]) {
+      assert.doesNotMatch(styleBlocks(source), pattern,
+        `${file}: ${what} is Chromium ${chrome}; a webOS 4 panel cannot parse it`);
+    }
   }
 });
