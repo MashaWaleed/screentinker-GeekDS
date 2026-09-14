@@ -10,6 +10,7 @@
 
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const crypto = require('node:crypto');
 process.env.DATA_DIR = path.join(os.tmpdir(), 'st-capmode-' + crypto.randomBytes(4).toString('hex'));
 process.env.SELF_HOSTED = 'true';
@@ -68,10 +69,59 @@ test('restore-on-start is gated on device owner, so no dialog lands over live co
   assert.ok(guard > 0 && guard < request, 'the ownership check comes BEFORE the request');
 });
 
-test('the dashboard says nothing when the tier is unknown or already durable', () => {
+test('the dashboard notice fires on exactly the tiers that need it', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'device-detail.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function captureModeNotice'), src.indexOf('// Mirrors platformFamily'));
-  assert.match(fn, /if \(!mode \|\| mode === 'accessibility'\) return ''/,
-    'NULL is "not reported", not a fault, and accessibility needs no nudge');
-  assert.match(fn, /device\.remote\.capture_view/, 'and the degraded case is called out');
+  const start = src.indexOf('function captureModeNotice');
+  assert.ok(start > 0, 'device-detail.js no longer defines captureModeNotice');
+  const fn = src.slice(start, src.indexOf('// Mirrors platformFamily'));
+  // Run the REAL function rather than pattern-matching its source: a regex over the body passes
+  // just as happily when the branches are wrong.
+  const notice = vm.runInNewContext(fn + '; captureModeNotice', { t: (k) => k });
+
+  // NULL is "this panel has not told us" — every non-Android player and every older Android build.
+  // Rendering a fault there would put a warning on hundreds of displays that have nothing wrong.
+  assert.equal(notice({}), '', 'an unreported tier says nothing');
+  assert.equal(notice({ capture_mode: null }), '', 'and neither does an explicit null');
+  assert.equal(notice(null), '', 'nor a missing device');
+  // Accessibility is the durable path. A panel already on it needs no nudge toward it.
+  assert.equal(notice({ capture_mode: 'accessibility' }), '', 'the durable tier needs no nudge');
+
+  // The degraded tier is the whole point: this is the state harp's panels were left in.
+  const view = notice({ capture_mode: 'view' });
+  assert.match(view, /device\.remote\.capture_view/, 'the degraded tier is called out');
+  assert.match(view, /var\(--warning\)/, 'and as a warning, not as a note');
+
+  // Capturing fine, but the grant dies on the next update — worth saying, not worth alarming.
+  const projection = notice({ capture_mode: 'projection' });
+  assert.match(projection, /device\.remote\.capture_projection/);
+  assert.match(projection, /var\(--text-muted\)/, 'projection is working, so it is not a warning');
+
+  assert.match(notice({ capture_mode: 'none' }), /device\.remote\.capture_none/);
+
+  for (const [mode, html] of [['view', view], ['projection', projection]]) {
+    assert.equal((html.match(/<span/g) || []).length, (html.match(/<\/span>/g) || []).length,
+      `${mode} renders balanced markup`);
+  }
+});
+
+test('⚠️ a failed silent re-arm WITHDRAWS the dialog, and finish() alone does not', () => {
+  // Verified on an emulator, and this is the half that was wrong the first time. The consent dialog
+  // belongs to systemui and is started for a RESULT INTO OUR TASK, so finishing this activity
+  // leaves the dialog parked over live signage exactly as before — which is the outcome the whole
+  // probe exists to avoid. finishActivity(requestCode) is the call that ends it.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'android', 'app', 'src', 'main', 'java', 'com',
+      'remotedisplay', 'player', 'ScreenCapturePermissionActivity.kt'), 'utf8');
+  const probe = src.slice(src.indexOf('private fun armSilentGrantProbe'));
+  // Comments only, stripped: the body below explains WHY finish() is not enough, and an ordering
+  // check over the raw text would happily match the word "finish()" inside that explanation.
+  const body = probe.slice(0, probe.indexOf('override fun onActivityResult'))
+    .split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  assert.match(body, /finishActivity\(REQUEST_CODE\)/, 'the child consent activity is finished');
+  assert.ok(body.indexOf('finishActivity(REQUEST_CODE)') < body.indexOf('finish()'),
+    'and withdrawn BEFORE this activity goes away, while it can still be addressed');
+  assert.match(body, /putBoolean\(PREF_AUTO_RESTORE, false\)/,
+    'a panel that raised a dialog never auto-retries');
+  // The probe must not fire for an operator-initiated request; someone is looking at that panel.
+  assert.match(body, /if \(!restoreAttempt\) return/);
 });
