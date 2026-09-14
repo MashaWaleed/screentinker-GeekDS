@@ -11,6 +11,7 @@ The whole project is MIT licensed and self-hosting is free. A paid hosted versio
 - [ScreenTinker home](https://screentinker.com/): what it is, features, pricing, and platform support.
 - [What is digital signage?](https://screentinker.com/guides/what-is-digital-signage.html): plain-language explanation of how signage works, what it displays, and what it costs.
 - [Open source digital signage software](https://screentinker.com/guides/open-source-digital-signage.html): the licence, the data-ownership argument, and where ScreenTinker fits.
+- [Certified Hardware](https://screentinker.com/certified-hardware): the device models ByteTinker has tested, what each one does, which are only community-reported, and which are not supported and why.
 
 ## Choosing how to run it
 

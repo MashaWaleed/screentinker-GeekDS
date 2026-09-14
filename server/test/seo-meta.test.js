@@ -34,7 +34,12 @@ const decode = (s) => s
 function fileFor(urlPath) {
   if (urlPath === '/') return path.join(FRONTEND, 'landing.html');
   if (urlPath.endsWith('/')) return path.join(FRONTEND, urlPath, 'index.html');
-  return path.join(FRONTEND, urlPath);
+  // An extension-less URL is served by an explicit route in server.js off the same name + .html
+  // (/certified-hardware, and /docs and /agency in the same style). That indirection exists so a
+  // URL named in a contract does not encode the file layout, so resolve it the same way here.
+  const direct = path.join(FRONTEND, urlPath);
+  if (!path.extname(urlPath) && fs.existsSync(`${direct}.html`)) return `${direct}.html`;
+  return direct;
 }
 
 const urls = [...fs.readFileSync(SITEMAP, 'utf8').matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)]

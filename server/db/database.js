@@ -1470,6 +1470,40 @@ const migrations = [
    * events ('auth:login_success', 'alert:device_offline'), not HTTP requests, and have no status. */
   'ALTER TABLE activity_log ADD COLUMN status_code INTEGER',
 
+  /* Community hardware reports for the public Certified Hardware page.
+   *
+   * ⚠️ THIS TABLE CAN NEVER PRODUCE A CERTIFIED ENTRY. Reseller agreements define Certified Hardware
+   * as the models published on that page, and support obligations attach to them, so certification
+   * stays in certified-hardware.json where a human commits it. What lands here is the other half of
+   * that page: "a user says this works", published with an explicit note that it carries no support
+   * commitment. The status is forced server-side, not chosen by the submitter.
+   *
+   * decision_token_hash is the emailed one-click approve/reject link. Only the hash is stored and
+   * consuming it clears the row's token, so a link works exactly once — same shape as email verify. */
+  `CREATE TABLE IF NOT EXISTS hardware_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    manufacturer TEXT,
+    model_numbers TEXT,
+    category TEXT NOT NULL,
+    os TEXT,
+    player TEXT,
+    max_resolution TEXT,
+    player_version TEXT,
+    notes TEXT,
+    submitter_name TEXT,
+    submitter_email TEXT,
+    submitted_ip TEXT,
+    submitted_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision_token_hash TEXT,
+    decision_token_expires INTEGER,
+    decided_at INTEGER,
+    decided_by TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_hardware_submissions_status ON hardware_submissions(status)',
+
   /* Which screen-capture tier a panel can actually use: projection | accessibility | view | none.
    *
    * ⚠️ ADDED BECAUSE THE LIVE VIEW DEGRADES SILENTLY. MediaProjection consent does not survive the

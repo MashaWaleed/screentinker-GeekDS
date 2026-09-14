@@ -334,6 +334,23 @@ app.get('/openapi.yaml', (req, res) => {
 app.get('/docs', (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'api-docs.html'));
 });
+// Certified Hardware. ⚠️ EXTENSION-LESS ON PURPOSE: reseller agreements name this URL, so it must
+// not encode how the page happens to be built today. ByteTinker's own entries come from the
+// committed certified-hardware.json; approved community reports are merged in from the database.
+// The router falls back to the committed static page if that merge fails, because a URL named in a
+// contract should degrade to "our entries only" rather than to an error.
+app.use('/certified-hardware', require('./routes/certified-hardware'));
+app.get('/certified-hardware/submit', (req, res) => {
+  res.sendFile(path.join(config.frontendDir, 'certified-hardware-submit.html'));
+});
+// Public and unauthenticated by design: the page asks people to report what runs, and requiring an
+// account would mean only customers could answer. Nothing posted here can publish as certified.
+// A plain <form> posts urlencoded, so that parser is mounted here rather than globally.
+app.use('/api/hardware-submissions', rateLimit(3600000, 5)); // 5 reports per hour per IP
+app.use('/api/hardware-submissions', express.urlencoded({ extended: false, limit: '32kb' }),
+  require('./routes/hardware-submissions'));
+app.use('/hardware-submissions', require('./routes/hardware-submissions'));
+
 // #73: the standalone agency portal (token-auth, NOT the JWT dashboard SPA). Served as its
 // own page so the agency never touches the dashboard login.
 app.get('/agency', (req, res) => {
