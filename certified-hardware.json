@@ -146,7 +146,7 @@
       "player_version": "1.9.4",
       "min_version": "1.9.4",
       "provisioning_url": "/guides/digital-signage-android-tv.html",
-      "buy_url": null,
+      "buy_url": "https://amzn.to/4cKsp8A",
       "notes": [
         "The panel is 1280x800. It was tested with 1080p content, which the device downscales to fit, so a 1080p playlist plays correctly but is not shown at full resolution.",
         "Requires ScreenTinker 1.9.4 or later. Earlier Android builds could strand a panel on \"waiting for content\" after a restart, with no recovery short of clearing the app and re-provisioning (issue #162, fixed 2026-07-10)."
