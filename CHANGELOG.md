@@ -24,7 +24,11 @@ server. A guard fails the build if a committed copy drifts from its source, and 
 compiles every script the old engine loads and fails if any of it would need downlevelling. Layout
 features those engines lack have been replaced throughout the pages a panel renders, with the
 bounds preserved rather than approximated, so modern panels look identical. Contributed by
-MashaWaleed.
+@MashaWaleed in #343.
+
+@MashaWaleed authored 5 of the 21 commits in this release, and the webOS 4/5/6 player is entirely
+their work: five revisions across four review rounds, including the ahead-of-time build, both
+guards, and the compatibility sweep across every surface a panel renders.
 
 ### Fixed
 
