@@ -2746,4 +2746,9 @@ export default {
     'approval.disable_confirm':
         'Goedkeuring uitschakelen? {n} openstaande inzending(en) worden geannuleerd. Er wordt niets automatisch gepubliceerd; hun concepten en geschiedenis blijven bewaard en bewerkers kunnen ze daarna rechtstreeks publiceren.',
     'approval.toast.saved': 'Goedkeuringsinstellingen opgeslagen.',
+    'content.pdf.rendering': 'Bezig met renderen van {name}: pagina {done} van {total}',
+    'content.pdf.uploading': '{name}: pagina\'s uploaden — {pct}%',
+    'content.pdf.playlist_description': 'De pagina\'s van {name}, {count} in totaal. Gemaakt van de PDF-upload.',
+    'content.toast.pdf_imported': '{name}: {count} pagina\'s toegevoegd aan een map en een afspeellijst met dezelfde naam',
+    'content.toast.pdf_playlist_failed': '{name}: {count} pagina\'s zijn geüpload, maar de afspeellijst kon niet worden aangemaakt: {error}',
 };
