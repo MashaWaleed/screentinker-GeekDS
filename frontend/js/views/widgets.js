@@ -25,6 +25,7 @@ function tzOptions() {
  * the calls only run on a click. See test/frontend-shared-helpers.test.js.
  */
 import { esc, hydrateAuthImages } from '../utils.js';
+import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 
 // A refused request must reject, not resolve.
 //
@@ -61,6 +62,14 @@ const WIDGET_ICONS = {
 };
 const widgetTypeName = (id) => t(`widget.type.${id.replace(/-/g, '_')}.name`);
 const widgetTypeDesc = (id) => t(`widget.type.${id.replace(/-/g, '_')}.desc`);
+
+// Plugin widget types fetched from the server. Empty when plugins are off (404/[]).
+let pluginTypes = [];
+const pluginTypeById = () => {
+  const m = new Map();
+  for (const p of pluginTypes) m.set(p.type, p);
+  return m;
+};
 
 function escAttr(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -477,6 +486,7 @@ export async function render(container) {
       `).join('')}
     </div>
     <div class="content-grid" id="widgetGrid"></div>
+    <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="card"></div>
 
     <!-- Widget Config Modal -->
     <div class="modal-overlay" id="widgetModal" style="display:none">
@@ -517,13 +527,102 @@ export async function render(container) {
     };
   });
 
+  async function loadPluginTypes() {
+    try {
+      const r = await API('/widgets/plugin-types');
+      pluginTypes = Array.isArray(r && r.types) ? r.types : [];
+    } catch {
+      pluginTypes = [];
+    }
+    const grid = document.getElementById('widgetTypeGrid');
+    if (grid && pluginTypes.length) {
+    for (const p of pluginTypes) {
+      if (grid.querySelector(`[data-create-type="${CSS.escape(p.type)}"]`)) continue;
+      const card = document.createElement('div');
+      card.className = 'content-item';
+      card.style.cursor = 'pointer';
+      card.dataset.createType = p.type;
+      card.innerHTML = `
+        <div style="padding:20px;text-align:center">
+          <div style="font-size:36px;margin-bottom:8px">${esc(p.icon || '🔌')}</div>
+          <div style="font-weight:600;font-size:14px">${esc(p.label || p.type)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${esc(p.plugin_id || 'plugin')}</div>
+        </div>`;
+      card.onclick = () => {
+        creatingType = p.type;
+        editingWidget = null;
+        grid.style.display = 'none';
+        showConfigForm(p.type, {});
+      };
+      grid.appendChild(card);
+    }
+    }
+    await loadPluginSubmit();
+  }
+
+  async function loadPluginSubmit() {
+    const card = document.getElementById('pluginSubmitCard');
+    if (!card) return;
+    let mine;
+    try {
+      const res = await fetch('/api/plugin-submissions', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (res.status === 404) { card.style.display = 'none'; return; }
+      if (!res.ok) { card.style.display = 'none'; return; }
+      mine = await res.json();
+    } catch {
+      card.style.display = 'none';
+      return;
+    }
+    card.style.display = '';
+    const pending = (mine.submissions || []).filter((s) => s.status === 'pending');
+    card.innerHTML = `
+      <h3 style="margin:0 0 6px;font-size:14px">${t('widget.plugin_submit.title')}</h3>
+      <p style="margin:0 0 10px;color:var(--text-muted);font-size:12px">${t('widget.plugin_submit.desc')}</p>
+      ${pending.length ? `<p style="font-size:12px;margin:0 0 8px">${t('widget.plugin_submit.pending')}: ${pending.map((s) => esc(s.plugin_id)).join(', ')}</p>` : ''}
+      <form id="widgetPluginSubmitForm" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <input type="file" id="widgetPluginZip" accept=".zip,application/zip" />
+        <button type="submit" class="btn btn-secondary btn-sm">${t('widget.plugin_submit.cta')}</button>
+      </form>`;
+    const form = document.getElementById('widgetPluginSubmitForm');
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const input = document.getElementById('widgetPluginZip');
+      const file = input && input.files && input.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('package', file, file.name);
+      try {
+        const res = await fetch('/api/plugin-submissions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: fd,
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+        showToast(t('widget.plugin_submit.ok'), 'success');
+        await loadPluginSubmit();
+      } catch (e) {
+        showToast(e.message || t('admin.plugins.failed'), 'error');
+      }
+    });
+  }
+
   function showConfigForm(type, config) {
-    const typeName = widgetTypeName(type);
+    const plugin = pluginTypeById().get(type);
+    const typeName = plugin ? (plugin.label || plugin.type) : widgetTypeName(type);
     document.getElementById('widgetModalTitle').textContent = editingWidget
       ? t('widget.edit_x', { type: typeName })
       : t('widget.new_x', { type: typeName });
 
     let html = `<div class="form-group"><label>${t('widget.field.name')}</label><input type="text" id="wName" class="input" value="${escAttr(config._name || typeName)}"></div>`;
+
+    if (plugin) {
+      html += pluginFieldsHtml(plugin.fields || [], config, 'wPlugin_');
+      document.getElementById('widgetConfigForm').innerHTML = html;
+      document.getElementById('widgetModal').style.display = 'flex';
+      return;
+    }
 
     switch (type) {
       case 'clock':
@@ -1109,6 +1208,8 @@ export async function render(container) {
   function getConfigFromForm(type) {
     const config = {};
     const val = id => document.getElementById(id)?.value;
+    const plugin = pluginTypeById().get(type);
+    if (plugin) return readPluginFields(plugin.fields || [], 'wPlugin_');
     switch (type) {
       case 'clock': Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: parseInt(val('wFontSize')) || 64, color: val('wColor'), background: val('wBg'), show_date: true,
         // #323: seconds were always on with no way to turn them off, and the clock was formatted
@@ -1208,8 +1309,11 @@ export async function render(container) {
       return;
     }
     grid.innerHTML = widgets.map(w => {
-      const icon = WIDGET_ICONS[w.widget_type] || '?';
-      const typeLabel = WIDGET_TYPES.includes(w.widget_type) ? widgetTypeName(w.widget_type) : w.widget_type;
+      const plugin = pluginTypeById().get(w.widget_type);
+      const icon = WIDGET_ICONS[w.widget_type] || (plugin ? esc(plugin.icon || '🔌') : '?');
+      const typeLabel = WIDGET_TYPES.includes(w.widget_type)
+        ? widgetTypeName(w.widget_type)
+        : (plugin ? (plugin.label || plugin.type) : w.widget_type);
       return `
         <div class="content-item">
           <div class="content-item-preview" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px">
@@ -1292,7 +1396,7 @@ export async function render(container) {
     };
   }
 
-  loadWidgets();
+  loadPluginTypes().then(() => loadWidgets());
 }
 
 export function cleanup() {}

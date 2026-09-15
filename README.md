@@ -204,6 +204,9 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `MESH_ALLOW_UPLINK` | Let this server report to another one. | `false` |
 | `MESH_MAX_DEPTH` | Longest chain of linked servers. | `2` |
 | `MESH_MIN_NODE_VERSION` | Oldest peer version this server will pair with. | `2.0.0-0` |
+| `PLUGINS_ENABLED` | Load the plugin system (widget types, data-source resolvers, optional routes). Off by default and invisible — see [Plugins](docs/plugins.md). | unset |
+| `PLUGINS_DIR` | Operator-installed plugins. Survives `git pull`. | `$DATA_DIR/plugins` |
+| `PLUGIN_INBOX_DIR` | Quarantine for uploaded plugin zips. Not a plugin root. | `$DATA_DIR/plugin-inbox` |
 
 #### Android players under an MDM
 
@@ -318,6 +321,15 @@ check the proxy first.
 ### Optional Integrations
 
 All integrations are optional. The app works fully without any of them.
+
+#### Plugins (self-hosted)
+
+Off by default. Set `PLUGINS_ENABLED=true` to load trusted local plugins from `plugins/` (bundled
+samples) and `$DATA_DIR/plugins` (yours). Platform admin enables each plugin; a restart loads it.
+A widget plugin is an HTML renderer on the existing player path — no APK rebuild. Editors can
+upload a `.zip`; it sits in quarantine until platform admin approves that exact tree hash, then
+enable + restart still required. See **[docs/plugins.md](docs/plugins.md)**. Bundled samples:
+`plugins/countdown` (widget), `plugins/json-api` (data source), `plugins/webhook` (hooks).
 
 #### AI Content Design (local or cloud)
 
@@ -1079,6 +1091,7 @@ server/           Node.js/Express backend
   services/       Background services (heartbeat, scheduler, alerts, activity logging)
   ws/             WebSocket handlers (device namespace + dashboard namespace)
   player/         Web-based display player
+plugins/          Bundled plugins (off unless PLUGINS_ENABLED=true)
 frontend/         Static SPA dashboard
   js/views/       View components (dashboard, playlists, groups, schedules, etc.)
   js/utils.js     Shared utilities (HTML escaping)

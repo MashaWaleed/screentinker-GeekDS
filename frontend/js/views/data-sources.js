@@ -2,8 +2,10 @@ import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
 import { t, getAvailableLanguages } from '../i18n.js';
+import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 
 let dataSourcesList = [];
+let pluginDsTypes = [];
 
 export async function render(container) {
   container.innerHTML = `
@@ -32,6 +34,12 @@ export async function render(container) {
   `;
 
   document.getElementById('newDataSourceBtn').onclick = () => openEditModal(null);
+  try {
+    const r = await api.getDataSourcePluginTypes();
+    pluginDsTypes = Array.isArray(r && r.types) ? r.types : [];
+  } catch {
+    pluginDsTypes = [];
+  }
   await loadDataSources();
 }
 
@@ -259,8 +267,9 @@ function openEditModal(ds) {
         <div>
           <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text-primary,#f8fafc)">${esc(t('data_sources.integration_type'))}</label>
           <select id="dsTypeInput" class="input" style="width:100%" ${isEdit ? 'disabled' : ''}>
-            <option value="ical" selected>${esc(t('data_sources.type_ical'))}</option>
-            <option value="api" disabled>${esc(t('data_sources.type_api_soon'))}</option>
+            <option value="ical" ${!ds?.type || ds.type === 'ical' ? 'selected' : ''}>${esc(t('data_sources.type_ical'))}</option>
+            ${pluginDsTypes.map((p) => `<option value="${esc(p.type)}" ${ds?.type === p.type ? 'selected' : ''}>${esc(p.label || p.type)}</option>`).join('')}
+            ${pluginDsTypes.some((p) => p.type === 'json-api') ? '' : `<option value="api" disabled>${esc(t('data_sources.type_api_soon'))}</option>`}
             <option value="sheets" disabled>${esc(t('data_sources.type_sheets_soon'))}</option>
           </select>
         </div>
@@ -277,6 +286,7 @@ function openEditModal(ds) {
           </div>
         </div>
 
+        <div id="dsIcalFields">
         <div>
           <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text-primary,#f8fafc)">${esc(t('data_sources.url_label'))}</label>
           <input type="text" id="dsUrlInput" class="input" style="width:100%" placeholder="${esc(t('data_sources.url_placeholder'))}" value="${esc(cfg.url || '')}">
@@ -335,6 +345,9 @@ function openEditModal(ds) {
             </div>
           </div>
         </details>
+        </div>
+
+        <div id="dsPluginFields"></div>
 
         <!-- Test Connection & Live Preview Button -->
         <div>
@@ -358,6 +371,25 @@ function openEditModal(ds) {
   overlay.querySelector('#closeDsModalBtn').onclick = close;
   overlay.querySelector('#cancelDsModalBtn').onclick = close;
 
+  const typeInput = overlay.querySelector('#dsTypeInput');
+  const icalFields = overlay.querySelector('#dsIcalFields');
+  const pluginFieldsHost = overlay.querySelector('#dsPluginFields');
+  const selectedPlugin = () => pluginDsTypes.find((p) => p.type === typeInput.value) || null;
+  const paintPluginFields = () => {
+    const plugin = selectedPlugin();
+    if (plugin) {
+      icalFields.style.display = 'none';
+      pluginFieldsHost.style.display = '';
+      pluginFieldsHost.innerHTML = pluginFieldsHtml(plugin.fields || [], cfg, 'dsPlugin_');
+    } else {
+      icalFields.style.display = '';
+      pluginFieldsHost.style.display = 'none';
+      pluginFieldsHost.innerHTML = '';
+    }
+  };
+  typeInput.onchange = paintPluginFields;
+  paintPluginFields();
+
   // Auto-slug on name input
   const nameInput = overlay.querySelector('#dsNameInput');
   const slugInput = overlay.querySelector('#dsSlugInput');
@@ -367,12 +399,30 @@ function openEditModal(ds) {
     };
   }
 
+  function icalConfig() {
+    return {
+      url: overlay.querySelector('#dsUrlInput').value.trim(),
+      interval_min: parseInt(overlay.querySelector('#dsIntervalInput').value, 10) || 15,
+      lookahead_days: parseInt(overlay.querySelector('#dsLookaheadInput').value, 10) || 14,
+      filter_include: overlay.querySelector('#dsFilterIncludeInput').value.trim(),
+      filter_exclude: overlay.querySelector('#dsFilterExcludeInput').value.trim(),
+      locale: overlay.querySelector('#dsLocaleInput').value,
+      timezone: overlay.querySelector('#dsTzInput').value.trim(),
+      hide_private: overlay.querySelector('#dsPrivacyInput').checked,
+    };
+  }
+
   // Test button
   const testBtn = overlay.querySelector('#dsTestBtn');
   const testResult = overlay.querySelector('#dsTestResult');
   testBtn.onclick = async () => {
-    const url = overlay.querySelector('#dsUrlInput').value.trim();
-    if (!url) {
+    const plugin = selectedPlugin();
+    const type = plugin ? plugin.type : 'ical';
+    const testConfig = plugin ? readPluginFields(plugin.fields || [], 'dsPlugin_') : icalConfig();
+    const missingRequired = plugin
+      ? (plugin.fields || []).some((f) => f.required && (testConfig[f.name] == null || testConfig[f.name] === ''))
+      : !testConfig.url;
+    if (missingRequired) {
       testResult.style.display = 'block';
       testResult.innerHTML = `<div style="padding:10px;border-radius:6px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:12px">${esc(t('data_sources.test_url_required'))}</div>`;
       return;
@@ -382,22 +432,18 @@ function openEditModal(ds) {
     testBtn.textContent = t('data_sources.testing');
     testResult.style.display = 'none';
 
-    const testConfig = {
-      url,
-      interval_min: parseInt(overlay.querySelector('#dsIntervalInput').value, 10) || 15,
-      lookahead_days: parseInt(overlay.querySelector('#dsLookaheadInput').value, 10) || 14,
-      filter_include: overlay.querySelector('#dsFilterIncludeInput').value.trim(),
-      filter_exclude: overlay.querySelector('#dsFilterExcludeInput').value.trim(),
-      locale: overlay.querySelector('#dsLocaleInput').value,
-      timezone: overlay.querySelector('#dsTzInput').value.trim(),
-      hide_private: overlay.querySelector('#dsPrivacyInput').checked,
-    };
-
     try {
-      const res = await api.testDataSource('ical', testConfig);
+      const res = await api.testDataSource(type, testConfig, ds && ds.id);
       const prev = res.preview || {};
       testResult.style.display = 'block';
-      testResult.innerHTML = `
+      if (plugin) {
+        testResult.innerHTML = `
+          <div style="padding:12px;border-radius:6px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);font-size:12px;color:var(--text-primary)">
+            <div style="color:#10b981;font-weight:600;margin-bottom:8px">${esc(t('data_sources.test_plugin_ok'))}</div>
+            <pre style="margin:0;white-space:pre-wrap;font-size:11px">${esc(JSON.stringify(prev, null, 2).slice(0, 1200))}</pre>
+          </div>`;
+      } else {
+        testResult.innerHTML = `
         <div style="padding:12px;border-radius:6px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);font-size:12px">
           <div style="display:flex;align-items:center;gap:6px;color:#10b981;font-weight:600;margin-bottom:8px">
             <span>${esc(t('data_sources.test_success', { n: prev.event_count || 0 }))}</span>
@@ -410,6 +456,7 @@ function openEditModal(ds) {
           </div>
         </div>
       `;
+      }
     } catch (err) {
       testResult.style.display = 'block';
       testResult.innerHTML = `
@@ -427,28 +474,26 @@ function openEditModal(ds) {
   overlay.querySelector('#saveDsModalBtn').onclick = async () => {
     const name = nameInput.value.trim();
     const slug = slugInput.value.trim();
-    const url = overlay.querySelector('#dsUrlInput').value.trim();
+    const plugin = selectedPlugin();
+    const type = plugin ? plugin.type : 'ical';
+    const config = plugin ? readPluginFields(plugin.fields || [], 'dsPlugin_') : icalConfig();
 
-    if (!name || !url) {
+    if (!name) {
+      alert(t('data_sources.fill_required'));
+      return;
+    }
+    if (plugin) {
+      const missing = (plugin.fields || []).some((f) => f.required && (config[f.name] == null || config[f.name] === ''));
+      if (missing) {
+        alert(t('data_sources.fill_required'));
+        return;
+      }
+    } else if (!config.url) {
       alert(t('data_sources.fill_required'));
       return;
     }
 
-    const payload = {
-      name,
-      slug: slug || undefined,
-      type: 'ical',
-      config: {
-        url,
-        interval_min: parseInt(overlay.querySelector('#dsIntervalInput').value, 10) || 15,
-        lookahead_days: parseInt(overlay.querySelector('#dsLookaheadInput').value, 10) || 14,
-        filter_include: overlay.querySelector('#dsFilterIncludeInput').value.trim(),
-        filter_exclude: overlay.querySelector('#dsFilterExcludeInput').value.trim(),
-        locale: overlay.querySelector('#dsLocaleInput').value,
-        timezone: overlay.querySelector('#dsTzInput').value.trim(),
-        hide_private: overlay.querySelector('#dsPrivacyInput').checked,
-      }
-    };
+    const payload = { name, slug: slug || undefined, type, config };
 
     const saveBtn = overlay.querySelector('#saveDsModalBtn');
     saveBtn.disabled = true;

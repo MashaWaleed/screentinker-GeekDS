@@ -166,6 +166,10 @@ app.use((req, res, next) => {
    */
   if (req.path.startsWith('/api/content/') && req.path.endsWith('/bundle')) return next();
   if (/^\/api\/content\/[^/]+\/bundle-preview\//.test(req.path)) return next();
+  // Plugin static files are operator HTML/JS, same CSP case as a widget render. Only skip
+  // the dashboard policy when the loader is actually on — otherwise /plugins/* is just 404
+  // and must not look different from any other unknown path.
+  if (config.pluginsEnabled && req.path.startsWith('/plugins/')) return next();
   return dashboardCsp(req, res, next);
 });
 // CORS policy.
@@ -1418,6 +1422,8 @@ app.use('/api/widgets/preview-session', rateLimit(60000, 30)); // preview sessio
 // `/test` triggers an outbound fetch of an arbitrary calendar feed; cap it so a single
 // workspace cannot fan out unbounded requests to third-party URLs.
 app.use('/api/data-sources/test', rateLimit(60000, 10));
+app.post('/api/plugin-submissions', rateLimit(3600000, 10)); // 10 plugin zips per hour per IP
+app.post('/api/admin/plugins/submissions', rateLimit(3600000, 20));
 app.get('/api/kiosk/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 
 for (const r of PUBLIC_ROUTERS) {
@@ -1438,6 +1444,19 @@ for (const r of AGENCY_ROUTERS) {
   // (NOT tokenScopeGate). 'agency' is off the read/write/full ladder, so these tokens
   // reach ONLY here; agencyGate enforces the playlist allowlist + bound workspace.
   app.use(r.path, bearerAuth, resolveTenancy, agencyGate, require(r.mod));
+}
+
+/*
+ * Plugins (P1). Off unless PLUGINS_ENABLED is set: boot() returns without scanning or
+ * require() of plugin code. Must run after migrations (db was required at the top of
+ * this file) and after the JWT_ONLY mount so /api/admin/plugins is already behind
+ * requireAuth. Plugin-contributed routers mount at /api/plugins/:id with the same
+ * requireAuth + resolveTenancy as workspace routes.
+ */
+try {
+  require('./lib/plugins/load').boot(app, { requireAuth, resolveTenancy });
+} catch (e) {
+  console.warn('[plugins] loader failed:', e.message);
 }
 
 // Frontend version hash (changes when files are modified, triggers soft reload)

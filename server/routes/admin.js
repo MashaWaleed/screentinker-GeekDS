@@ -635,6 +635,10 @@ router.get('/limiter-rejections', requirePlatformAdmin, (req, res) => {
   });
 });
 
+// Plugin inventory. The sub-router 404s when PLUGINS_ENABLED is unset (P1). requirePlatformAdmin
+// runs first, so a non-admin probing this path gets the same 403 as every other /api/admin/* handler.
+router.use('/plugins', requirePlatformAdmin, require('./admin-plugins'));
+
 module.exports = router;
 module.exports.detectInstall = detectInstall;   // exported for admin-update-command.test.js
 

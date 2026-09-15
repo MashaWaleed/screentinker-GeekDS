@@ -122,7 +122,7 @@ for (const r of PUBLIC_ROUTERS) {
   });
 }
 test('partition: known-privileged routers are JWT-only and never public', () => {
-  const MUST_BE_PRIVATE = ['/api/admin', '/api/workspaces', '/api/ai', '/api/provision', '/api/white-label', '/api/tokens'];
+  const MUST_BE_PRIVATE = ['/api/admin', '/api/workspaces', '/api/ai', '/api/provision', '/api/white-label', '/api/tokens', '/api/plugin-submissions'];
   const jwtOnly = new Set(JWT_ONLY_ROUTERS.map(r => r.path));
   const publicSet = new Set(PUBLIC_ROUTERS.map(r => r.path));
   for (const p of MUST_BE_PRIVATE) {

@@ -85,6 +85,25 @@ module.exports = {
   // one running identical code. See server/lib/mesh/node-identity.js.
   meshMinNodeVersion: process.env.MESH_MIN_NODE_VERSION || '2.0.0-0',
 
+  /* ==========================================================================================
+   * PLUGINS — off by default and INVISIBLE.
+   *
+   * ⚠️ With PLUGINS_ENABLED unset there is no scan, no require() of plugin code, no /plugins
+   * static mount, and /api/admin/plugins 404s. A user who never sets the flag must not be able
+   * to tell the loader exists. That is the same guarantee mesh makes, for the same reason:
+   * loading operator-supplied Node is a different security posture from running the app.
+   *
+   * TWO DIRECTORIES, NOT ONE. Bundled samples live in the repo (plugins/ next to server/).
+   * Operator-installed copies live under DATA_DIR/plugins so they survive git pull / image
+   * replace. Same id in both: data-dir wins.
+   * ========================================================================================== */
+  pluginsEnabled: ['1', 'true', 'yes'].includes(
+    String(process.env.PLUGINS_ENABLED || '').toLowerCase()),
+  bundledPluginsDir: process.env.BUNDLED_PLUGINS_DIR || path.join(__dirname, '..', 'plugins'),
+  dataPluginsDir: process.env.PLUGINS_DIR || path.join(DATA_DIR, 'plugins'),
+  // Quarantine for uploaded plugin zips. Not a plugin root — the loader never scans it.
+  pluginInboxDir: process.env.PLUGIN_INBOX_DIR || path.join(DATA_DIR, 'plugin-inbox'),
+
   // App-level heartbeat. Checker runs every heartbeatInterval and marks
   // devices offline if last_heartbeat is older than heartbeatTimeout.
   // Env override for self-hosters on slow/jittery networks (issue #3:

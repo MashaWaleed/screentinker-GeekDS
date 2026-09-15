@@ -1719,6 +1719,52 @@ const migrations = [
    )`,
   "CREATE INDEX IF NOT EXISTS idx_data_sources_workspace ON data_sources(workspace_id)",
   "CREATE INDEX IF NOT EXISTS idx_data_sources_slug ON data_sources(workspace_id, slug)",
+
+  /*
+   * Plugin enablement is instance-global (no workspace_id) because loading is process-global:
+   * a require() of plugin code cannot be scoped to one tenant. Widget *instances* of a plugin
+   * type remain workspace-scoped like every other widget. Default disabled — dropping a folder
+   * on disk is not RCE-on-next-boot.
+   */
+  `CREATE TABLE IF NOT EXISTS plugin_state (
+     id         TEXT PRIMARY KEY,
+     enabled    INTEGER NOT NULL DEFAULT 0,
+     error      TEXT,
+     loaded_at  INTEGER,
+     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  'ALTER TABLE plugin_state ADD COLUMN settings TEXT',
+  'ALTER TABLE plugin_state ADD COLUMN allowlist_required INTEGER NOT NULL DEFAULT 0',
+  `CREATE TABLE IF NOT EXISTS plugin_submissions (
+     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+     plugin_id       TEXT NOT NULL,
+     name            TEXT,
+     version         TEXT,
+     description     TEXT,
+     sha256          TEXT NOT NULL,
+     tree_sha256     TEXT,
+     archive_name    TEXT NOT NULL,
+     manifest_json   TEXT NOT NULL,
+     files_json      TEXT NOT NULL,
+     size_bytes      INTEGER NOT NULL,
+     submitted_by    TEXT NOT NULL,
+     workspace_id    TEXT,
+     submitted_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     status          TEXT NOT NULL DEFAULT 'pending',
+     decided_by      TEXT,
+     decided_at      INTEGER,
+     decision_note   TEXT
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_plugin_submissions_plugin_status ON plugin_submissions(plugin_id, status)',
+  `CREATE TABLE IF NOT EXISTS plugin_allowlist (
+     plugin_id      TEXT PRIMARY KEY,
+     sha256         TEXT NOT NULL,
+     source         TEXT NOT NULL,
+     submission_id  INTEGER,
+     approved_by    TEXT NOT NULL,
+     approved_at    INTEGER NOT NULL,
+     note           TEXT
+   )`,
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

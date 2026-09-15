@@ -215,8 +215,20 @@ function pinnedLookup(vettedAddresses) {
  * @param {number} [options.maxBytes] Maximum response body size in bytes
  * @param {object} [options.validators] ETag / Last-Modified conditional headers { etag, lastModified }
  * @param {'stream'|'text'|'buffer'} [options.responseType='stream'] Response format
+ * @param {string|Buffer} [options.body] Optional request body (capped at 64KiB)
+ * @param {boolean} [options.accept2xx=false] Treat any 2xx as success (webhooks: Discord 204)
  * @returns {Promise<{res?: import('http').IncomingMessage, text?: string, buffer?: Buffer, notModified?: boolean, statusCode: number, headers: object}>}
  */
+// Headers that must not survive a cross-origin redirect. Matched case-insensitively.
+const SENSITIVE_HEADERS = new Set(['authorization', 'cookie', 'proxy-authorization']);
+function stripSensitiveHeaders(hdrs) {
+  const out = {};
+  for (const [k, v] of Object.entries(hdrs || {})) {
+    if (!SENSITIVE_HEADERS.has(k.toLowerCase())) out[k] = v;
+  }
+  return out;
+}
+
 function guardedRequest(urlString, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const headers = { ...(options.headers || {}) };
@@ -226,6 +238,18 @@ function guardedRequest(urlString, options = {}) {
   const maxBytes = options.maxBytes || null;
   const validators = options.validators || null;
   const responseType = options.responseType || 'stream';
+  const accept2xx = !!options.accept2xx;
+
+  let bodyBuf = null;
+  if (options.body != null) {
+    bodyBuf = Buffer.isBuffer(options.body) ? options.body : Buffer.from(String(options.body), 'utf8');
+    if (bodyBuf.length > 64 * 1024) {
+      return Promise.reject(new GuardedRequestError('Request body too large', 'size-limit'));
+    }
+    if (headers['content-length'] == null && headers['Content-Length'] == null) {
+      headers['content-length'] = String(bodyBuf.length);
+    }
+  }
 
   if (validators) {
     if (validators.etag) headers['if-none-match'] = validators.etag;
@@ -234,7 +258,7 @@ function guardedRequest(urlString, options = {}) {
 
   const deadline = Date.now() + timeoutMs;
 
-  const follow = (targetUrl, redirectsLeft) => new Promise((resolve, reject) => {
+  const follow = (targetUrl, redirectsLeft, hdrs = headers) => new Promise((resolve, reject) => {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
       return reject(new GuardedRequestError('Request timed out', 'timeout'));
@@ -255,7 +279,7 @@ function guardedRequest(urlString, options = {}) {
         method,
         lookup: pinnedLookup(addresses),
         servername: url.hostname,
-        headers,
+        headers: hdrs,
       }, (res) => {
         const sc = res.statusCode;
 
@@ -274,10 +298,19 @@ function guardedRequest(urlString, options = {}) {
           let next;
           try { next = new URL(res.headers.location, url).toString(); }
           catch (_) { return reject(new GuardedRequestError('Invalid redirect location', 'bad-redirect')); }
-          return follow(next, redirectsLeft - 1).then(resolve, reject);
+          // Never carry credentials to a DIFFERENT origin. A redirect to another host (which is
+          // re-vetted for SSRF, so any public host is reachable) must not receive the caller's
+          // Authorization / Cookie, or a plugin fetch becomes a token-exfiltration channel. This
+          // mirrors what the platform fetch() does; same-origin redirects keep the headers.
+          let nextHdrs = hdrs;
+          try {
+            if (new URL(next).origin !== url.origin) nextHdrs = stripSensitiveHeaders(hdrs);
+          } catch (_) { nextHdrs = stripSensitiveHeaders(hdrs); }
+          return follow(next, redirectsLeft - 1, nextHdrs).then(resolve, reject);
         }
 
-        if (sc !== 200) {
+        const ok = accept2xx ? (sc >= 200 && sc < 300) : (sc === 200);
+        if (!ok) {
           res.resume();
           clearDeadlineTimer();
           return reject(new GuardedRequestError(`Request failed with status ${sc}`, 'upstream-status', sc));
@@ -336,6 +369,7 @@ function guardedRequest(urlString, options = {}) {
         reject(err);
       });
 
+      if (bodyBuf) req.write(bodyBuf);
       req.end();
     }, reject);
   });

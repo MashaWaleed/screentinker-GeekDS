@@ -57,6 +57,9 @@ COPY scripts/ /app/scripts/
 # while working perfectly from a dev checkout — and a missing player asset fails silently, because
 # the SPA fallback answers 200 with HTML where JavaScript was expected.
 COPY brightsign/ /app/brightsign/
+# Bundled plugins (countdown sample, etc.). Loaded only when PLUGINS_ENABLED=true;
+# operator-installed copies live on the /data volume at $DATA_DIR/plugins.
+COPY plugins/ /app/plugins/
 VOLUME ["/data"]
 EXPOSE 3001
 CMD ["node", "server.js"]

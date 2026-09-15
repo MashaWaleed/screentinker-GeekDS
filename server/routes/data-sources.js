@@ -11,10 +11,26 @@ const { db } = require('../db/database');
 const { syncDataSource, withFetchSlot, bumpDependentWidgets } = require('../lib/data-sources/service');
 const { resolveIcalData } = require('../lib/data-sources/ical-resolver');
 const { requireWorkspaceWrite, canWrite } = require('../lib/permissions');
-const { parseSafeUrl } = require('../lib/ssrf-guard');
+const { parseSafeUrl, guardedRequest } = require('../lib/ssrf-guard');
 const { isRealTimezone } = require('../lib/device-timezone');
+const pluginRegistry = require('../lib/plugins/registry');
+const { redactSecrets, mergeSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
 
-const SUPPORTED_TYPES = new Set(['ical']);
+function isSupportedDataSourceType(type) {
+  return type === 'ical' || pluginRegistry.hasDataSource(type);
+}
+
+// Two configs share a secret destination when their `url` fields resolve to the same origin.
+// A missing or unparseable URL on either side counts as "different" so we fail closed and never
+// forward a stored secret to a URL it was not saved for.
+function sameSecretDestination(a, b) {
+  const originOf = (cfg) => {
+    const u = cfg && typeof cfg.url === 'string' ? cfg.url : '';
+    try { return new URL(u).origin.toLowerCase(); } catch (_) { return null; }
+  };
+  const oa = originOf(a);
+  return oa !== null && oa === originOf(b);
+}
 
 // Helper to generate a clean URL-friendly slug
 function toSlug(str) {
@@ -26,10 +42,11 @@ function toSlug(str) {
     .replace(/^_|_$/g, '') || 'source';
 }
 
-function sanitizeConfigForRole(cfg, req) {
+function sanitizeConfigForRole(cfg, req, type) {
   if (!cfg || typeof cfg !== 'object') return {};
-  if (canWrite(req)) return cfg;
-  const safe = { ...cfg };
+  const fields = fieldsForDataSource(type);
+  let safe = redactSecrets(cfg, fields);
+  if (canWrite(req)) return safe;
   if (safe.url) {
     try {
       const u = new URL(safe.url);
@@ -63,13 +80,13 @@ function validateDataSourceConfig(type, config) {
       parseSafeUrl(config.url);
     } catch (err) {
       if (err.reason === 'userinfo') {
-        return 'Calendar URLs with basic-auth credentials (username/password) are not allowed';
+        return 'URLs with basic-auth credentials (username/password) are not allowed';
       }
       if (err.reason === 'bad-scheme') {
         return 'URL must use HTTP, HTTPS, or webcal protocol';
       }
       if (err.reason && err.reason.startsWith('blocked-ip')) {
-        return 'The calendar address is not allowed';
+        return 'The address is not allowed';
       }
       return 'Invalid URL format';
     }
@@ -95,12 +112,16 @@ router.get('/', (req, res) => {
     try { data = JSON.parse(r.cached_data || 'null'); } catch (_) {}
     return {
       ...r,
-      config: sanitizeConfigForRole(cfg, req),
+      config: sanitizeConfigForRole(cfg, req, r.type),
       data,
     };
   });
 
   res.json(parsed);
+});
+
+router.get('/plugin-types', (req, res) => {
+  res.json({ types: pluginRegistry.listDataSourceTypes() });
 });
 
 // ─── GET /api/data-sources/:id (Get single data source with live preview) ──────
@@ -119,7 +140,7 @@ router.get('/:id', (req, res) => {
 
   res.json({
     ...row,
-    config: sanitizeConfigForRole(config, req),
+    config: sanitizeConfigForRole(config, req, row.type),
     data,
   });
 });
@@ -131,7 +152,7 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
     return res.status(400).json({ error: 'Type and config are required' });
   }
 
-  if (!SUPPORTED_TYPES.has(type)) {
+  if (!isSupportedDataSourceType(type)) {
     return res.status(400).json({ error: `Unsupported data source type: ${type}` });
   }
 
@@ -149,10 +170,42 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
     return res.status(400).json({ error: valErr });
   }
 
+  if (req.body.id) {
+    const existing = db.prepare('SELECT config, type FROM data_sources WHERE id = ? AND workspace_id = ?')
+      .get(req.body.id, req.workspaceId);
+    if (existing) {
+      let prev = {};
+      try { prev = JSON.parse(existing.config); } catch (_) {}
+      // Only back-fill a stored secret when this test targets the SAME destination the secret was
+      // saved for. GET redacts secrets from everyone (see sanitizeConfigForRole), so without this a
+      // workspace writer could point an existing source at their own URL, have the stored token
+      // merged in, and receive it -- a redaction bypass / credential-exfil path. Fail closed: if
+      // either URL is missing or unparseable, do not merge, and the test runs without the secret.
+      if (sameSecretDestination(parsedConfig, prev)) {
+        parsedConfig = mergeSecrets(parsedConfig, prev, fieldsForDataSource(existing.type || type));
+      }
+    }
+  }
+
   try {
     let previewData = null;
     if (type === 'ical') {
       previewData = await withFetchSlot(() => resolveIcalData(parsedConfig));
+    } else {
+      const plugin = pluginRegistry.getDataSource(type);
+      if (!plugin) return res.status(400).json({ error: `Unsupported data source type: ${type}` });
+      previewData = await withFetchSlot(() => plugin.resolve(parsedConfig, {
+        workspaceId: req.workspaceId,
+        now: new Date(),
+        log: (...args) => console.warn(`[plugin:${plugin.pluginId}]`, ...args),
+        fetch: (url, opts = {}) => guardedRequest(url, {
+          method: opts.method || 'GET',
+          headers: opts.headers,
+          timeoutMs: opts.timeoutMs || 10000,
+          maxBytes: opts.maxBytes || 512 * 1024,
+          responseType: opts.responseType || 'text',
+        }),
+      }));
     }
 
     res.json({
@@ -183,7 +236,7 @@ router.post('/', requireWorkspaceWrite, (req, res) => {
     return res.status(400).json({ error: 'Name, type, and config are required' });
   }
 
-  if (!SUPPORTED_TYPES.has(type)) {
+  if (!isSupportedDataSourceType(type)) {
     return res.status(400).json({ error: `Unsupported data source type: ${type}` });
   }
 
@@ -232,7 +285,7 @@ router.post('/', requireWorkspaceWrite, (req, res) => {
     slug: uniqueSlug,
     name: cleanName,
     type,
-    config: parsedConfig,
+    config: sanitizeConfigForRole(parsedConfig, req, type),
     data: null,
   });
 });
@@ -272,6 +325,9 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
     if (valErr) {
       return res.status(400).json({ error: valErr });
     }
+    let prev = {};
+    try { prev = JSON.parse(existing.config); } catch (_) {}
+    parsedConfig = mergeSecrets(parsedConfig, prev, fieldsForDataSource(existing.type));
     configJson = JSON.stringify(parsedConfig);
   } else {
     try { parsedConfig = JSON.parse(configJson); } catch (_) {}
@@ -303,7 +359,7 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
     slug: cleanSlug,
     name: cleanName,
     type: existing.type,
-    config: parsedConfig,
+    config: sanitizeConfigForRole(parsedConfig, req, existing.type),
     data: existingData,
   });
 });

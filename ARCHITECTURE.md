@@ -10,6 +10,7 @@ that deletes a feature.
 
 > Detailed reasoning lives in [`docs/mesh-directive.md`](docs/mesh-directive.md).
 > The design that implements these is [`docs/mesh-phase0-design.md`](docs/mesh-phase0-design.md).
+> Plugin invariants (P1–P10) live in [`docs/plugins.md`](docs/plugins.md).
 
 ---
 

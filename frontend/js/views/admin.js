@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc, isPlatformAdmin } from '../utils.js';
 import { t } from '../i18n.js';
+import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
 import { openManageWorkspacesModal } from '../components/admin-user-workspaces-modal.js';
 import { openCreateOrgModal } from '../components/admin-create-org-modal.js';
@@ -136,6 +137,22 @@ export async function render(container) {
       <h3>Status endpoint</h3>
       <div id="statusDebugForm"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
     </div>
+
+    <div class="settings-section" id="pluginsSection" style="display:none">
+      <h3>${t('admin.plugins.title')}</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">${t('admin.plugins.desc')}</p>
+      <form id="pluginUploadForm" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px">
+        <input type="file" id="pluginZipInput" accept=".zip,application/zip" />
+        <button type="submit" class="btn btn-primary btn-sm">${t('admin.plugins.upload_cta')}</button>
+        <span style="color:var(--text-muted);font-size:12px">${t('admin.plugins.upload_hint')}</span>
+      </form>
+      <h4 style="margin:16px 0 8px;font-size:13px">${t('admin.plugins.pending')}</h4>
+      <div id="pluginSubmissions"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
+      <h4 style="margin:16px 0 8px;font-size:13px">${t('admin.plugins.title')}</h4>
+      <div id="pluginsTable"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
+      <h4 style="margin:16px 0 8px;font-size:13px">${t('admin.plugins.allowlist_title')}</h4>
+      <div id="pluginAllowlist"><p style="color:var(--text-muted)">${t('common.loading')}</p></div>
+    </div>
   `;
 
   // Add User (#10): platform admin provisions a user into ANY workspace. The
@@ -170,6 +187,7 @@ export async function render(container) {
   loadPlans();
   loadSystem();
   loadStatusDebug();
+  loadPlugins();
 
 }
 
@@ -803,4 +821,237 @@ function wireDiagnostics() {
       btn.textContent = original;
     }
   });
+}
+
+async function loadPlugins() {
+  const section = document.getElementById('pluginsSection');
+  const host = document.getElementById('pluginsTable');
+  const subHost = document.getElementById('pluginSubmissions');
+  const pinHost = document.getElementById('pluginAllowlist');
+  if (!section || !host) return;
+  const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+  let body;
+  try {
+    const res = await fetch('/api/admin/plugins', { headers });
+    if (res.status === 404) { section.style.display = 'none'; return; }
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+    body = await res.json();
+  } catch (e) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  const plugins = Array.isArray(body.plugins) ? body.plugins : [];
+
+  let pending = [];
+  try {
+    const r = await fetch('/api/admin/plugins/submissions?status=pending', { headers });
+    if (r.ok) pending = ((await r.json()).submissions) || [];
+  } catch { pending = []; }
+
+  let pins = [];
+  try {
+    const r = await fetch('/api/admin/plugins/allowlist', { headers });
+    if (r.ok) pins = ((await r.json()).allowlist) || [];
+  } catch { pins = []; }
+
+  if (subHost) {
+    if (!pending.length) {
+      subHost.innerHTML = `<p style="color:var(--text-muted);font-size:12px">${t('admin.plugins.pending_empty')}</p>`;
+    } else {
+      subHost.innerHTML = pending.map((s) => `
+        <details class="card" style="margin-bottom:8px;padding:12px">
+          <summary style="cursor:pointer;font-weight:600">${esc(s.name || s.plugin_id)} <span style="font-weight:400;color:var(--text-muted);font-family:monospace;font-size:12px">${esc(s.plugin_id)} @ ${esc(s.version || '')}</span></summary>
+          <p style="font-size:12px;color:var(--text-muted);margin:8px 0">${esc(s.description || '')}</p>
+          <p style="font-size:11px;font-family:monospace;word-break:break-all">sha256 ${esc(s.sha256)}</p>
+          <details style="margin:8px 0">
+            <summary style="cursor:pointer;font-size:12px">${t('admin.plugins.manifest')}</summary>
+            <pre style="font-size:11px;overflow:auto;max-height:240px;background:var(--bg-primary);padding:8px;border-radius:6px">${esc(JSON.stringify(s.manifest || {}, null, 2))}</pre>
+          </details>
+          <p style="font-size:12px;margin:8px 0 4px">${t('admin.plugins.files')}</p>
+          <ul style="font-size:12px;font-family:monospace;margin:0 0 8px 16px">${(s.files || []).map((f) => `<li><button type="button" class="btn btn-secondary btn-sm" data-plugin-inspect="${s.id}" data-plugin-path="${esc(f.name)}">${t('admin.plugins.inspect')} ${esc(f.name)}</button> (${f.size})</li>`).join('')}</ul>
+          <pre data-plugin-inspect-out="${s.id}" style="display:none;font-size:11px;overflow:auto;max-height:320px;background:var(--bg-primary);padding:8px;border-radius:6px;white-space:pre-wrap"></pre>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" data-plugin-approve="${s.id}">${t('admin.plugins.approve')}</button>
+            <button class="btn btn-secondary btn-sm" data-plugin-reject="${s.id}">${t('admin.plugins.reject')}</button>
+          </div>
+        </details>`).join('');
+    }
+  }
+
+  if (!plugins.length) {
+    host.innerHTML = `<p style="color:var(--text-muted)">${t('admin.plugins.empty')}</p>`;
+  } else {
+    host.innerHTML = `<table class="data-table"><thead><tr>
+      <th>${t('admin.plugins.col_name')}</th>
+      <th>${t('admin.plugins.col_id')}</th>
+      <th>${t('admin.plugins.col_origin')}</th>
+      <th>${t('admin.plugins.col_status')}</th>
+      <th>${t('admin.plugins.col_hash')}</th>
+      <th></th>
+    </tr></thead><tbody>${plugins.map((p) => {
+      const status = p.error
+        ? t('admin.plugins.error')
+        : (p.enabled ? (p.loaded ? t('admin.plugins.loaded') : t('admin.plugins.enabled')) : t('admin.plugins.disabled'));
+      const action = p.enabled
+        ? `<button class="btn btn-secondary btn-sm" data-plugin-disable="${esc(p.id)}">${t('admin.plugins.disable')}</button>`
+        : `<button class="btn btn-primary btn-sm" data-plugin-enable="${esc(p.id)}">${t('admin.plugins.enable')}</button>`;
+      const pinBtn = p.allowlisted
+        ? `<button class="btn btn-secondary btn-sm" data-plugin-unpin="${esc(p.id)}">${t('admin.plugins.unpin')}</button>`
+        : `<button class="btn btn-secondary btn-sm" data-plugin-pin="${esc(p.id)}">${t('admin.plugins.pin')}</button>`;
+      const err = p.error ? `<div style="color:var(--danger);font-size:12px;margin-top:4px">${esc(p.error)}</div>` : '';
+      const hash = p.allowlist_sha256 ? `<span style="font-family:monospace;font-size:11px">${esc(p.allowlist_sha256.slice(0, 12))}…</span>` : '—';
+      return `<tr>
+        <td>${esc(p.name || p.id)}${err}</td>
+        <td style="font-family:monospace;font-size:12px">${esc(p.id)}</td>
+        <td>${esc(p.origin || '')}</td>
+        <td>${esc(status)}</td>
+        <td>${hash}</td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap">${action}${pinBtn}</td>
+      </tr>`;
+    }).join('')}</tbody></table>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:8px">${t('admin.plugins.restart')}</p>
+    ${plugins.filter((p) => Array.isArray(p.settings_fields) && p.settings_fields.length).map((p) => `
+      <details class="card" style="margin-top:12px;padding:12px" data-plugin-settings="${esc(p.id)}">
+        <summary style="cursor:pointer;font-weight:600">${esc(p.name || p.id)} — ${t('admin.plugins.settings')}</summary>
+        <form data-plugin-settings-form="${esc(p.id)}" style="margin-top:12px">
+          ${pluginFieldsHtml(p.settings_fields, p.settings || {}, 'plugset_' + p.id + '_')}
+          <button type="submit" class="btn btn-primary btn-sm" style="margin-top:8px">${t('admin.plugins.save_settings')}</button>
+        </form>
+      </details>`).join('')}`;
+  }
+
+  if (pinHost) {
+    if (!pins.length) {
+      pinHost.innerHTML = `<p style="color:var(--text-muted);font-size:12px">${t('admin.plugins.allowlist_empty')}</p>`;
+    } else {
+      pinHost.innerHTML = `<table class="data-table"><thead><tr>
+        <th>${t('admin.plugins.col_id')}</th><th>sha256</th><th>source</th></tr></thead><tbody>
+        ${pins.map((r) => `<tr>
+          <td style="font-family:monospace;font-size:12px">${esc(r.plugin_id)}</td>
+          <td style="font-family:monospace;font-size:11px;word-break:break-all">${esc(r.sha256)}</td>
+          <td>${esc(r.source)}</td>
+        </tr>`).join('')}</tbody></table>`;
+    }
+  }
+
+  const post = async (url, extra, okMsg) => {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: extra ? JSON.stringify(extra) : '{}',
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+      const r = await res.json().catch(() => ({}));
+      showToast(okMsg || (r.restart_required ? t('admin.plugins.restart_now') : t('admin.plugins.saved')), 'success');
+      await loadPlugins();
+    } catch (e) {
+      showToast(e.message || t('admin.plugins.failed'), 'error');
+    }
+  };
+
+  const toggle = (id, enable) => post(`/api/admin/plugins/${encodeURIComponent(id)}/${enable ? 'enable' : 'disable'}`);
+  host.querySelectorAll('[data-plugin-enable]').forEach((b) => b.addEventListener('click', () => toggle(b.dataset.pluginEnable, true)));
+  host.querySelectorAll('[data-plugin-disable]').forEach((b) => b.addEventListener('click', () => toggle(b.dataset.pluginDisable, false)));
+  host.querySelectorAll('[data-plugin-pin]').forEach((b) => b.addEventListener('click', () => post(`/api/admin/plugins/${encodeURIComponent(b.dataset.pluginPin)}/pin`, null, t('admin.plugins.pinned_ok'))));
+  host.querySelectorAll('[data-plugin-unpin]').forEach((b) => b.addEventListener('click', () => {
+    const plugin = plugins.find((p) => p.id === b.dataset.pluginUnpin);
+    if (plugin && plugin.allowlist_source === 'upload' && !window.confirm(t('admin.plugins.unpin_upload_confirm'))) return;
+    post(`/api/admin/plugins/${encodeURIComponent(b.dataset.pluginUnpin)}/unpin`);
+  }));
+  host.querySelectorAll('[data-plugin-settings-form]').forEach((form) => {
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const id = form.dataset.pluginSettingsForm;
+      const plugin = plugins.find((p) => p.id === id);
+      if (!plugin) return;
+      const settings = readPluginFields(plugin.settings_fields || [], 'plugset_' + id + '_');
+      try {
+        const res = await fetch(`/api/admin/plugins/${encodeURIComponent(id)}/settings`, {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ settings }),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+        showToast(t('admin.plugins.settings_saved'), 'success');
+        await loadPlugins();
+      } catch (e) {
+        showToast(e.message || t('admin.plugins.failed'), 'error');
+      }
+    });
+  });
+  if (subHost) {
+    const approveOne = async (id) => {
+      if (!window.confirm(t('admin.plugins.approve_confirm'))) return;
+      try {
+        const res = await fetch(`/api/admin/plugins/submissions/${id}/approve`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        if (res.status === 409) {
+          const e = await res.json().catch(() => ({}));
+          if (!window.confirm((e.error ? e.error + '\n\n' : '') + t('admin.plugins.replace_confirm'))) return;
+          const res2 = await fetch(`/api/admin/plugins/submissions/${id}/approve`, {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ replace: true }),
+          });
+          if (!res2.ok) throw new Error((await res2.json().catch(() => ({}))).error || String(res2.status));
+          showToast(t('admin.plugins.approved_ok'), 'success');
+          await loadPlugins();
+          return;
+        }
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+        showToast(t('admin.plugins.approved_ok'), 'success');
+        await loadPlugins();
+      } catch (e) {
+        showToast(e.message || t('admin.plugins.failed'), 'error');
+      }
+    };
+    subHost.querySelectorAll('[data-plugin-approve]').forEach((b) => b.addEventListener('click', () => approveOne(b.dataset.pluginApprove)));
+    subHost.querySelectorAll('[data-plugin-reject]').forEach((b) => b.addEventListener('click', () => post(`/api/admin/plugins/submissions/${b.dataset.pluginReject}/reject`, { note: '' }, t('admin.plugins.rejected_ok'))));
+    subHost.querySelectorAll('[data-plugin-inspect]').forEach((b) => b.addEventListener('click', async () => {
+      const id = b.dataset.pluginInspect;
+      const rel = b.dataset.pluginPath;
+      const out = subHost.querySelector(`[data-plugin-inspect-out="${id}"]`);
+      if (!out || !rel) return;
+      try {
+        const res = await fetch(`/api/admin/plugins/submissions/${id}/file?path=${encodeURIComponent(rel)}`, { headers });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+        const body = await res.json();
+        out.style.display = '';
+        out.textContent = body.binary ? `${rel} (${body.size} bytes, binary)` : (body.text || '');
+      } catch (e) {
+        showToast(e.message || t('admin.plugins.failed'), 'error');
+      }
+    }));
+  }
+
+  const form = document.getElementById('pluginUploadForm');
+  if (form && !form.dataset.bound) {
+    form.dataset.bound = '1';
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const input = document.getElementById('pluginZipInput');
+      const file = input && input.files && input.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('package', file, file.name);
+      try {
+        const res = await fetch('/api/admin/plugins/submissions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: fd,
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || String(res.status));
+        showToast(t('admin.plugins.queued'), 'success');
+        input.value = '';
+        await loadPlugins();
+      } catch (e) {
+        showToast(e.message || t('admin.plugins.failed'), 'error');
+      }
+    });
+  }
 }

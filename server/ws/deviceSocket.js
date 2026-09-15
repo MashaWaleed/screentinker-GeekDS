@@ -25,6 +25,7 @@ const logCoalescer = require('../lib/log-coalescer');
 const loopLag = require('../services/loop-lag');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings restore
 const incidentClassify = require('../lib/incident-classify'); // offline-cause log: disconnect-reason + connectivity classification
+const pluginHooks = require('../lib/plugins/hooks');
 
 // Debounce window for marking a device offline on socket disconnect. Brief
 // flap (Wi-Fi blip, Engine.IO ping miss, server-side eviction-then-reconnect)
@@ -294,6 +295,9 @@ function getClientIp(socket) {
 // this audit log is deferred to the next flush.
 function logDeviceStatus(deviceId, status, reason, detail) {
   statusLogWriter.record(deviceId, status, reason, detail);
+  if (status === 'online' || status === 'offline') {
+    pluginHooks.emit('device.' + status, { device_id: deviceId, reason: reason || null });
+  }
 }
 
 
