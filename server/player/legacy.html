@@ -1136,6 +1136,7 @@ let lastWallSync = null;
 let currentVideoEl = null;
 let currentItemStartedAt = 0;
 let renderSeq = 0;
+let pendingVideoSeq = -1;
 function isWallFollower() {
   return !!(wallConfig && !wallConfig.is_leader);
 }
@@ -3733,7 +3734,7 @@ function handlePlaylistUpdate(data) {
         videoEl: currentVideoEl ? { attached: document.contains(currentVideoEl), ended: !!currentVideoEl.ended, errored: !!currentVideoEl.error } : null,
         surfaceAttached: !!(container && container.querySelector("video,img,iframe,.wall-stage"))
       };
-      if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && PlayerMediaHealth.needsReattach(state)) {
+      if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {
         console.log("[refresh] media surface lost on no-change refresh \u2014 re-attaching current item");
         playCurrentItem();
       } else if (isPlaying) {
@@ -4114,6 +4115,7 @@ function clearZoneTimers() {
   zoneTimers = {};
 }
 function teardownCurrentMedia(keep) {
+  renderSeq++;
   if (!keep && advanceTimer) {
     clearTimeout(advanceTimer);
     advanceTimer = null;
@@ -4493,11 +4495,63 @@ function renderImageBuffered(item) {
     (img.decode ? img.decode() : Promise.resolve()).then(() => swap(img)).catch(() => swap(img));
   }, fail);
 }
+function wireSoloVideoPlayback(video, item, src, opts) {
+  const o = opts || {};
+  video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted);
+  if (!o.forceMuted) video.volume = 1;
+  video.loop = !!o.loop;
+  video.onended = () => {
+    if (!video.loop && o.mayAdvance) nextItem();
+  };
+  video.onerror = () => mediaFailureSkip(video, "video", src, o.mayAdvance);
+  video.onloadeddata = () => {
+    console.log("[wall/audio] video loaded file=" + item.filename + " role=" + (o.role || "solo") + " muted=" + video.muted + " volume=" + video.volume);
+  };
+  if (o.forceMuted) {
+    video.addEventListener("volumechange", () => {
+      if (!video.muted) {
+        video.muted = true;
+      }
+    });
+  }
+  video.play().then(() => {
+    console.log("[wall/audio] play() ok muted=" + video.muted + " volume=" + video.volume);
+  }).catch((err) => {
+    console.warn("[wall/audio] play() rejected, falling back to muted: " + ((err == null ? void 0 : err.name) || (err == null ? void 0 : err.message) || err));
+    video.muted = true;
+    video.play().then(() => console.log("[wall/audio] muted-fallback play() ok")).catch((e2) => console.error("[wall/audio] muted-fallback play() also failed: " + ((e2 == null ? void 0 : e2.name) || (e2 == null ? void 0 : e2.message) || e2)));
+  });
+  setTimeout(() => {
+    if (video.paused) {
+      video.muted = true;
+      video.play().catch(() => {
+      });
+    }
+  }, 2e3);
+}
+function attachSubtitleTrack(video, item) {
+  if (!item.subtitle_url || item.remote_url) return;
+  const track = document.createElement("track");
+  track.kind = "subtitles";
+  track.srclang = item.subtitle_lang || "en";
+  track.label = item.subtitle_lang || "Subtitles";
+  track.default = true;
+  track.src = "".concat(config.serverUrl, "/uploads/content/").concat(item.subtitle_url);
+  video.appendChild(track);
+  track.addEventListener("load", () => {
+    try {
+      track.track.mode = "showing";
+    } catch (e) {
+    }
+  });
+}
 function renderVideoBuffered(item) {
   const src = mediaUrl(item);
-  const from = currentTexturableFrame();
   const t = item.transition;
+  const wantsWipe = !!(t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady());
+  const from = wantsWipe ? currentTexturableFrame() : null;
   const mySeq = renderSeq;
+  pendingVideoSeq = mySeq;
   const stale = () => renderSeq !== mySeq;
   const abandon = () => {
     try {
@@ -4507,25 +4561,21 @@ function renderVideoBuffered(item) {
     } catch (e) {
     }
   };
+  const outgoing = currentVideoEl;
+  if (outgoing) {
+    try {
+      outgoing.onended = null;
+      outgoing.onerror = null;
+      outgoing.onloadeddata = null;
+      if (!wantsWipe) outgoing.pause();
+    } catch (e) {
+    }
+  }
   const video = document.createElement("video");
   video.crossOrigin = "anonymous";
   video.playsInline = true;
   video.preload = "auto";
-  if (item.subtitle_url && !item.remote_url) {
-    const track = document.createElement("track");
-    track.kind = "subtitles";
-    track.srclang = item.subtitle_lang || "en";
-    track.label = item.subtitle_lang || "Subtitles";
-    track.default = true;
-    track.src = "".concat(config.serverUrl, "/uploads/content/").concat(item.subtitle_url);
-    video.appendChild(track);
-    track.addEventListener("load", () => {
-      try {
-        track.track.mode = "showing";
-      } catch (e) {
-      }
-    });
-  }
+  attachSubtitleTrack(video, item);
   video.muted = true;
   video.loop = playlist.length === 1;
   video.style.cssText = "width:100%;height:100%;object-fit:contain;background:transparent";
@@ -4535,29 +4585,22 @@ function renderVideoBuffered(item) {
       abandon();
       return;
     }
+    try {
+      video.pause();
+    } catch (e) {
+    }
     const c = document.getElementById("playerContainer");
     teardownCurrentMedia();
     c.style.display = "block";
     c.appendChild(video);
     currentVideoEl = video;
-    video.muted = !userHasInteracted || !!item.muted;
-    if (!video.muted) video.volume = 1;
-    video.onended = () => {
-      if (!video.loop) nextItem();
-    };
-    video.onerror = () => mediaFailureSkip(video, "video", src);
-    video.play().catch(() => {
-      video.muted = true;
-      video.play().catch(() => {
-      });
+    const followerNow = !!(wallConfig && !wallConfig.is_leader || groupSync);
+    wireSoloVideoPlayback(video, item, src, {
+      forceMuted: followerNow,
+      mayAdvance: !followerNow,
+      loop: playlist.length === 1 || followerNow,
+      role: wallConfig ? wallConfig.is_leader ? "leader" : "follower" : groupSync ? "group" : "solo"
     });
-    setTimeout(() => {
-      if (video.paused) {
-        video.muted = true;
-        video.play().catch(() => {
-        });
-      }
-    }, 2e3);
   };
   const onFirstFrame = () => {
     if (done) return;
@@ -4567,13 +4610,8 @@ function renderVideoBuffered(item) {
       abandon();
       return;
     }
-    try {
-      video.pause();
-    } catch (e) {
-    }
-    const canTexture = video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video);
     let to = null;
-    if (canTexture) {
+    if (wantsWipe && video.readyState >= 2 && video.videoWidth > 0 && isMediaReadable(video) && videoCompositingAvailable(video)) {
       try {
         const g = stageGeometry();
         to = g ? fitToCanvas(video, g.w, g.h) : null;
@@ -4581,7 +4619,11 @@ function renderVideoBuffered(item) {
         to = null;
       }
     }
-    if (from && to && t && Array.isArray(t.effects) && t.effects.length && transitionRuntimeReady()) {
+    if (from && to) {
+      try {
+        video.pause();
+      } catch (e) {
+      }
       runGlWipe(
         from,
         to,
@@ -4600,7 +4642,7 @@ function renderVideoBuffered(item) {
   };
   const armFrame = () => {
     if ("requestVideoFrameCallback" in video) video.requestVideoFrameCallback(() => onFirstFrame());
-    else setTimeout(onFirstFrame, 150);
+    setTimeout(() => onFirstFrame(), 150);
   };
   video.addEventListener("loadeddata", () => {
     video.play().then(armFrame).catch(armFrame);
@@ -4609,6 +4651,10 @@ function renderVideoBuffered(item) {
     if (done) return;
     done = true;
     if (watchdog) clearTimeout(watchdog);
+    if (stale()) {
+      abandon();
+      return;
+    }
     mediaFailureSkip(video, "video(buffered)", src);
   });
   watchdog = setTimeout(() => {
@@ -4621,7 +4667,6 @@ function renderVideoBuffered(item) {
     mountVideo();
   }, 800);
   video.src = src;
-  video.load();
 }
 function renderContent(item) {
   var _a, _b;
@@ -4649,7 +4694,7 @@ function renderContent(item) {
     renderImageBuffered(item);
     return;
   }
-  const isVideoBufferable = item && typeof item.mime_type === "string" && item.mime_type.startsWith("video/") && item.mime_type !== "video/youtube" && !item.widget_id && !wallConfig && !isZones && !groupSync && item.transition && Array.isArray(item.transition.effects) && item.transition.effects.length && transitionRuntimeReady() && _videoCompositingOk !== false;
+  const isVideoBufferable = item && typeof item.mime_type === "string" && item.mime_type.startsWith("video/") && item.mime_type !== "video/youtube" && !item.widget_id && !wallConfig && !isZones && !groupSync;
   if (isVideoBufferable) {
     renderVideoBuffered(item);
     return;
@@ -4703,42 +4748,18 @@ function renderContent(item) {
       const video = preloaded || document.createElement("video");
       if (!preloaded) video.src = src;
       video.autoplay = true;
-      video.muted = forceMuted ? true : !userHasInteracted || !!item.muted;
-      if (!forceMuted) video.volume = 1;
+      attachSubtitleTrack(video, item);
       video.playsInline = true;
       video.crossOrigin = "anonymous";
       video.style.cssText = wallConfig ? "width:100%;height:100%;object-fit:fill;background:#000" : "width:100%;height:100%;object-fit:contain;background:transparent";
-      video.loop = playlist.length === 1 || !!groupSync;
-      video.onended = () => {
-        if (!video.loop && !isFollower) nextItem();
-      };
-      video.onerror = () => mediaFailureSkip(video, "video", src, !isFollower);
-      video.onloadeddata = () => {
-        console.log("[wall/audio] video loaded file=" + item.filename + " role=" + (wallConfig ? wallConfig.is_leader ? "leader" : "follower" : "solo") + " muted=" + video.muted + " volume=" + video.volume);
-      };
-      if (forceMuted) {
-        video.addEventListener("volumechange", () => {
-          if (!video.muted) {
-            video.muted = true;
-          }
-        });
-      }
       mount.appendChild(video);
       currentVideoEl = video;
-      video.play().then(() => {
-        console.log("[wall/audio] play() ok muted=" + video.muted + " volume=" + video.volume);
-      }).catch((err) => {
-        console.warn("[wall/audio] play() rejected, falling back to muted: " + ((err == null ? void 0 : err.name) || (err == null ? void 0 : err.message) || err));
-        video.muted = true;
-        video.play().then(() => console.log("[wall/audio] muted-fallback play() ok")).catch((e2) => console.error("[wall/audio] muted-fallback play() also failed: " + ((e2 == null ? void 0 : e2.name) || (e2 == null ? void 0 : e2.message) || e2)));
+      wireSoloVideoPlayback(video, item, src, {
+        forceMuted,
+        mayAdvance: !isFollower,
+        loop: playlist.length === 1 || !!groupSync,
+        role: wallConfig ? wallConfig.is_leader ? "leader" : "follower" : groupSync ? "group" : "solo"
       });
-      setTimeout(() => {
-        if (video.paused) {
-          video.muted = true;
-          video.play().catch(() => {
-          });
-        }
-      }, 2e3);
     } else if (isImage) {
       const img = document.createElement("img");
       img.src = src;
