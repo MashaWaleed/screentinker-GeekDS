@@ -80,6 +80,44 @@ test('iCal resolver reports AVAILABLE when no active event', async () => {
   assert.match(data.status_detail, /Frei bis/);
 });
 
+test('iCal resolver defaults to English when no locale is set', async () => {
+  const now = new Date('2026-09-04T09:30:00Z');
+  // No locale in config: the room sign must speak English, not German (the old default).
+  const busy = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC' }, now);
+  assert.equal(busy.status, 'BUSY');
+  assert.equal(busy.is_busy, true);
+  assert.match(busy.status_detail, /^Busy until /);
+  // Back-compat aliases stay populated regardless of the chosen locale.
+  assert.equal(busy.status_de, 'BELEGT');
+  assert.equal(busy.status_en, 'BUSY');
+
+  const free = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC' }, new Date('2026-09-04T11:00:00Z'));
+  assert.equal(free.status, 'AVAILABLE');
+  assert.match(free.status_detail, /^Free until /);
+});
+
+test('iCal resolver localizes the room sign for a non-en/de locale (Dutch)', async () => {
+  const now = new Date('2026-09-04T09:30:00Z');
+  const busy = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC', locale: 'nl' }, now);
+  assert.equal(busy.status, 'BEZET');
+  assert.match(busy.status_detail, /^Bezet tot /);
+  // Real event summaries are passed through untouched; only the generated status is translated.
+  assert.equal(busy.current_event_summary, 'Projekt-Sync & Review');
+  // Back-compat de/en aliases are independent of the display locale.
+  assert.equal(busy.status_de, 'BELEGT');
+  assert.equal(busy.status_en, 'BUSY');
+
+  const free = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC', locale: 'nl' }, new Date('2026-09-04T11:00:00Z'));
+  assert.equal(free.status, 'BESCHIKBAAR');
+  assert.match(free.status_detail, /^Vrij tot /);
+});
+
+test('iCal resolver falls back to English for an unknown locale', async () => {
+  const now = new Date('2026-09-04T09:30:00Z');
+  const data = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC', locale: 'xx' }, now);
+  assert.equal(data.status, 'BUSY');
+});
+
 test('iCal resolver handles recurring RRULE events', async () => {
   const now = new Date('2026-09-04T08:15:00Z');
   const data = await resolveIcalData({ raw_data: RECURRING_ICS, timezone: 'UTC' }, now);
@@ -110,7 +148,8 @@ test('iCal resolver respects privacy mode', async () => {
   }, now);
 
   assert.equal(data.status_en, 'BUSY');
-  assert.equal(data.current_event_summary, 'Belegt');
+  // No locale set -> English default, so the privacy mask reads 'Busy' (not 'Belegt').
+  assert.equal(data.current_event_summary, 'Busy');
   assert.equal(data.current_event_description, '');
 });
 

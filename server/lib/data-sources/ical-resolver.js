@@ -48,6 +48,34 @@ async function fetchCalendar(urlString) {
   }
 }
 
+/*
+ * #i18n — room-status strings for the iCal room-booking output, one entry per language the app
+ * ships. The resolver produces these as literal text bound into slides via {{ds:name.status}},
+ * so localization has to happen here (server-side), keyed off the data source's `locale` setting.
+ * Unknown / unset locale falls back to English. busyUntil/freeUntil take an already-formatted time.
+ *
+ * Latin-script status words are upper-cased to match the existing BUSY/AVAILABLE convention.
+ * ⚠️ The CJK and Hindi entries (ja/zh/hi) are best-effort and worth a native-speaker check.
+ */
+const ROOM_STRINGS = {
+  en: { intl: 'en-US', hour12: true,  busy: 'BUSY', available: 'AVAILABLE', busyUntil: (t) => `Busy until ${t}`, freeUntil: (t) => `Free until ${t}`, freeAllDay: 'Free all day', allDay: 'All day', today: 'Today', tomorrow: 'Tomorrow', busyMask: 'Busy', eventFallback: 'Event' },
+  de: { intl: 'de-DE', hour12: false, busy: 'BELEGT', available: 'FREI', busyUntil: (t) => `Belegt bis ${t}`, freeUntil: (t) => `Frei bis ${t}`, freeAllDay: 'Ganztägig frei', allDay: 'Ganztägig', today: 'Heute', tomorrow: 'Morgen', busyMask: 'Belegt', eventFallback: 'Termin' },
+  nl: { intl: 'nl-NL', hour12: false, busy: 'BEZET', available: 'BESCHIKBAAR', busyUntil: (t) => `Bezet tot ${t}`, freeUntil: (t) => `Vrij tot ${t}`, freeAllDay: 'De hele dag vrij', allDay: 'Hele dag', today: 'Vandaag', tomorrow: 'Morgen', busyMask: 'Bezet', eventFallback: 'Afspraak' },
+  es: { intl: 'es-ES', hour12: false, busy: 'OCUPADO', available: 'DISPONIBLE', busyUntil: (t) => `Ocupado hasta las ${t}`, freeUntil: (t) => `Libre hasta las ${t}`, freeAllDay: 'Libre todo el día', allDay: 'Todo el día', today: 'Hoy', tomorrow: 'Mañana', busyMask: 'Ocupado', eventFallback: 'Evento' },
+  fr: { intl: 'fr-FR', hour12: false, busy: 'OCCUPÉ', available: 'LIBRE', busyUntil: (t) => `Occupé jusqu'à ${t}`, freeUntil: (t) => `Libre jusqu'à ${t}`, freeAllDay: 'Libre toute la journée', allDay: 'Journée entière', today: "Aujourd'hui", tomorrow: 'Demain', busyMask: 'Occupé', eventFallback: 'Événement' },
+  pt: { intl: 'pt-PT', hour12: false, busy: 'OCUPADO', available: 'DISPONÍVEL', busyUntil: (t) => `Ocupado até ${t}`, freeUntil: (t) => `Livre até ${t}`, freeAllDay: 'Livre o dia todo', allDay: 'Dia inteiro', today: 'Hoje', tomorrow: 'Amanhã', busyMask: 'Ocupado', eventFallback: 'Evento' },
+  it: { intl: 'it-IT', hour12: false, busy: 'OCCUPATO', available: 'LIBERO', busyUntil: (t) => `Occupato fino alle ${t}`, freeUntil: (t) => `Libero fino alle ${t}`, freeAllDay: 'Libero tutto il giorno', allDay: 'Tutto il giorno', today: 'Oggi', tomorrow: 'Domani', busyMask: 'Occupato', eventFallback: 'Evento' },
+  hi: { intl: 'hi-IN', hour12: false, busy: 'व्यस्त', available: 'उपलब्ध', busyUntil: (t) => `${t} तक व्यस्त`, freeUntil: (t) => `${t} तक उपलब्ध`, freeAllDay: 'पूरे दिन उपलब्ध', allDay: 'पूरा दिन', today: 'आज', tomorrow: 'कल', busyMask: 'व्यस्त', eventFallback: 'कार्यक्रम' },
+  ja: { intl: 'ja-JP', hour12: false, busy: '使用中', available: '空き', busyUntil: (t) => `${t} まで使用中`, freeUntil: (t) => `${t} まで空き`, freeAllDay: '終日空き', allDay: '終日', today: '今日', tomorrow: '明日', busyMask: '使用中', eventFallback: '予定' },
+  zh: { intl: 'zh-CN', hour12: false, busy: '使用中', available: '空闲', busyUntil: (t) => `使用中，至 ${t}`, freeUntil: (t) => `空闲，至 ${t}`, freeAllDay: '全天空闲', allDay: '全天', today: '今天', tomorrow: '明天', busyMask: '使用中', eventFallback: '活动' },
+};
+
+// Map a data source's `locale` (may be null, 'en-US', 'nl', etc.) to a table key. Default English.
+function pickRoomLocale(raw) {
+  const code = String(raw || 'en').toLowerCase().split(/[-_]/)[0];
+  return ROOM_STRINGS[code] ? code : 'en';
+}
+
 /**
  * Fetch and parse an iCal feed from a URL or raw string.
  *
@@ -67,7 +95,8 @@ async function fetchCalendar(urlString) {
  */
 async function resolveIcalData(config = {}, nowRef = new Date()) {
   const url = (config?.url || '').trim().replace(/^webcal:\/\//i, 'https://');
-  const locale = (config?.locale || 'de').toLowerCase().startsWith('en') ? 'en' : 'de';
+  const locale = pickRoomLocale(config?.locale);
+  const L = ROOM_STRINGS[locale];
   const lookaheadDays = Math.max(1, Math.min(365, parseInt(config?.lookahead_days, 10) || 14));
   const maxEvents = Math.max(1, Math.min(50, parseInt(config?.max_events, 10) || 10));
   const eventType = config?.event_type || 'all';
@@ -115,11 +144,11 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
   };
 
   const formatDayLabel = (key) => {
-    if (key === todayKey) return locale === 'de' ? 'Heute' : 'Today';
-    if (key === tomorrowKey) return locale === 'de' ? 'Morgen' : 'Tomorrow';
+    if (key === todayKey) return L.today;
+    if (key === tomorrowKey) return L.tomorrow;
     const [y, m, d] = key.split('-').map(Number);
     const noonUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-    return noonUtc.toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', {
+    return noonUtc.toLocaleDateString(L.intl, {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
@@ -127,14 +156,14 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     });
   };
 
-  const formatTime = (d) => d.toLocaleTimeString(locale === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: locale !== 'de', ...tzOpts });
+  const formatTime = (d) => d.toLocaleTimeString(L.intl, { hour: '2-digit', minute: '2-digit', hour12: L.hour12, ...tzOpts });
 
   const formatDate = (ev) => {
     if (ev.isAllDay) return formatDayLabel(ev.dayKey);
     const key = dateKey(ev.start);
-    if (key === todayKey) return locale === 'de' ? 'Heute' : 'Today';
-    if (key === tomorrowKey) return locale === 'de' ? 'Morgen' : 'Tomorrow';
-    return ev.start.toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', {
+    if (key === todayKey) return L.today;
+    if (key === tomorrowKey) return L.tomorrow;
+    return ev.start.toLocaleDateString(L.intl, {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
@@ -172,7 +201,7 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     if (eventType === 'timed' && isAllDay) continue;
     if (eventType === 'allday' && !isAllDay) continue;
 
-    const summary = hidePrivate ? (locale === 'de' ? 'Belegt' : 'Busy') : (rawSummary || (locale === 'de' ? 'Termin' : 'Event'));
+    const summary = hidePrivate ? L.busyMask : (rawSummary || L.eventFallback);
     const organizer = hidePrivate ? '' : (ev.organizer?.val || ev.organizer || '');
     const location = ev.location || '';
     const description = hidePrivate ? '' : (ev.description || '');
@@ -306,28 +335,24 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
   const nextEvent = flatEvents.find(e => e.isAllDay ? e.dayKey > todayKey : e.start > now) || null;
 
   const isBusy = !!currentEvent;
-  const statusDe = isBusy ? 'BELEGT' : 'FREI';
-  const statusEn = isBusy ? 'BUSY' : 'AVAILABLE';
-  const status = locale === 'de' ? statusDe : statusEn;
+  const statusDe = isBusy ? ROOM_STRINGS.de.busy : ROOM_STRINGS.de.available;
+  const statusEn = isBusy ? ROOM_STRINGS.en.busy : ROOM_STRINGS.en.available;
+  const status = isBusy ? L.busy : L.available;
 
   let statusDetail = '';
   if (isBusy) {
-    statusDetail = locale === 'de'
-      ? `Belegt bis ${formatTime(currentEvent.end)}`
-      : `Busy until ${formatTime(currentEvent.end)}`;
+    statusDetail = L.busyUntil(formatTime(currentEvent.end));
   } else if (nextEvent) {
     const nextIsToday = nextEvent.isAllDay
       ? (nextEvent.dayKey <= todayKey && nextEvent.endDayKey > todayKey)
       : (dateKey(nextEvent.start) === todayKey);
     if (nextIsToday && !nextEvent.isAllDay) {
-      statusDetail = locale === 'de'
-        ? `Frei bis ${formatTime(nextEvent.start)}`
-        : `Free until ${formatTime(nextEvent.start)}`;
+      statusDetail = L.freeUntil(formatTime(nextEvent.start));
     } else {
-      statusDetail = locale === 'de' ? 'Ganztägig frei' : 'Free all day';
+      statusDetail = L.freeAllDay;
     }
   } else {
-    statusDetail = locale === 'de' ? 'Ganztägig frei' : 'Free all day';
+    statusDetail = L.freeAllDay;
   }
 
   // Build root dictionary payload
@@ -365,7 +390,7 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     payload[`event_${idx}_title`] = ev.summary;
     payload[`event_${idx}_summary`] = ev.summary;
     payload[`event_${idx}_date`] = ev.isAllDay ? formatDate(ev) : `${formatDate(ev)}, ${formatTime(ev.start)}`;
-    payload[`event_${idx}_time`] = ev.isAllDay ? (locale === 'de' ? 'Ganztägig' : 'All day') : `${formatTime(ev.start)} – ${formatTime(ev.end)}`;
+    payload[`event_${idx}_time`] = ev.isAllDay ? L.allDay : `${formatTime(ev.start)} – ${formatTime(ev.end)}`;
     payload[`event_${idx}_location`] = ev.location || '';
     payload[`event_${idx}_organizer`] = ev.organizer || '';
   });
