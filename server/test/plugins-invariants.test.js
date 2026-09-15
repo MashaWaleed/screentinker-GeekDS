@@ -475,6 +475,22 @@ test('isAcceptedWidgetType still admits slide (first-party create path)', () => 
   assert.equal(registry.isAcceptedWidgetType('no-such-type'), false);
 });
 
+test('widget-type creation is validated even when plugins are OFF (intentional, signed off)', () => {
+  // beforeEach resets the registry, so this asserts the behaviour on an install with plugins
+  // disabled (an empty registry): the built-in types are accepted and any unknown type is refused.
+  // POST /api/widgets previously accepted any string; it now rejects unknown types unconditionally.
+  // This is a deliberate fail-fast (the render path only ever supported the built-ins, so a stray
+  // type was already unrenderable), NOT gated behind PLUGINS_ENABLED -- pinned here so the choice is
+  // explicit and cannot regress silently.
+  assert.equal(registry.listWidgetTypes().length, 0, 'no plugin types registered (plugins off)');
+  for (const t of ['clock', 'weather', 'rss', 'text', 'webpage', 'slide']) {
+    assert.equal(registry.isAcceptedWidgetType(t), true, `built-in ${t} accepted`);
+  }
+  assert.equal(registry.isAcceptedWidgetType('totally-made-up'), false, 'unknown type refused');
+  assert.equal(registry.isAcceptedDataSourceType('ical'), true, 'built-in ical accepted');
+  assert.equal(registry.isAcceptedDataSourceType('made-up-source'), false, 'unknown data source refused');
+});
+
 test('unknown hook names are a no-op at emit, not a throw', () => {
   assert.equal(hooks.emit('device.exploded', { device_id: 'x' }), 0);
 });
