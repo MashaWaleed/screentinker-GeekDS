@@ -382,8 +382,7 @@ export default {
         'Je organisatie verplicht single sign-on. Gebruik hierboven “Doorgaan met single sign-on” — je wachtwoord werkt hier niet.',
     'auth.sso_err_sso_required':
         'Je organisatie verplicht haar eigen single sign-on. Gebruik de single-sign-onoptie van je organisatie.',
-    'auth.sso_err_domain_not_allowed':
-        'Je organisatie heeft dit e-maildomein niet geverifieerd voor aanmelding. Vraag je beheerder om het te verifiëren in {brandName}.',
+    'auth.sso_err_domain_not_allowed': 'Je organisatie heeft dit e-maildomein niet geverifieerd voor aanmelding. Vraag je beheerder om het te verifiëren in {brandName}.',
     'auth.sso_err_account_exists_other_provider':
         'Er bestaat al een account met dit e-mailadres dat via een andere provider aanmeldt. Gebruik die provider of neem contact op met je beheerder.',
     'auth.signin_microsoft': 'Aanmelden met Microsoft',
@@ -685,8 +684,7 @@ export default {
     'device.owner_provision.adb_label': 'Of via ADB (nieuw apparaat, geen accounts, USB-foutopsporing ingeschakeld):',
     'device.owner_provision.copy': 'Kopiëren',
     'device.owner_provision.copied': 'Opdracht gekopieerd',
-    'device.owner_provision.constraints':
-        'Vereist een nieuw ingesteld of naar fabrieksinstellingen teruggezet apparaat zonder accounts, voordat andere apparaateigenaar-apps worden geregistreerd. Als een MDM het apparaat al beheert, blijft {brandName} op niveau 0/1 en beheert de MDM de updates.',
+    'device.owner_provision.constraints': 'Vereist een nieuw ingesteld of naar fabrieksinstellingen teruggezet apparaat zonder accounts, voordat andere apparaateigenaar-apps worden geregistreerd. Als een MDM het apparaat al beheert, blijft {brandName} op niveau 0/1 en beheert de MDM de updates.',
     'device.owner_provision.error': 'Provisioninginformatie kon niet worden geladen',
     'device.owner_provision.verified_from_apk':
         'Handtekening geverifieerd aan de hand van de huidige server-APK — komt altijd overeen met de build die wordt geïnstalleerd.',
@@ -743,8 +741,7 @@ export default {
     'device.tab.terminal': 'Terminal',
     'device.tab.terminal_tip':
         'Shell voor apparaateigenaar (draait als app-UID) + een APK doorsturen. Vooraf ingestelde opdrachten voor snelle diagnose.',
-    'device.terminal.welcome':
-        '{brandName}-shell — draait als app-UID (niet als root). Typ een opdracht of tik op een voorinstelling.',
+    'device.terminal.welcome': '{brandName}-shell — draait als app-UID (niet als root). Typ een opdracht of tik op een voorinstelling.',
     'device.terminal.placeholder': 'opdracht, bijv. getprop ro.product.model',
     'device.terminal.run': 'Uitvoeren',
     'device.terminal.clear': 'Wissen',
