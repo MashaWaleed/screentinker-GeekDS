@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 ### Added
 
@@ -42,6 +42,28 @@ thing to bolt onto an upload endpoint. pdf.js (Apache-2.0) is vendored under `fr
 with its codec licences beside it, and loaded only when a PDF is actually uploaded. The dashboard
 CSP gains `'wasm-unsafe-eval'` for the image codecs; that permits WebAssembly compilation only,
 not `eval`.
+
+**Room-booking signs in every language.** The iCal data-source room output (Busy / Available, "busy until" / "free until", today / tomorrow, all-day) is now produced from a per-language table covering all ten dashboard locales and defaults to English instead of German. An unknown locale falls back to English; the `status_de` / `status_en` payload fields are kept for back-compat, and the data-source language picker is driven from `getAvailableLanguages()`.
+
+**Dutch (nl) dashboard language,** at full key parity.
+
+**Secret fields encrypted at rest.** Secret fields in `data_sources.config` and `plugin_state.settings` are stored AES-256-GCM encrypted (key derived from the instance JWT secret, via `lib/secretbox`), with a one-time boot migration for existing rows. GET redaction is unchanged; rotating `JWT_SECRET` makes stored secrets re-enterable.
+
+**Per-plugin network egress allowlist.** A plugin may declare `network.allow` in `plugin.json`; its fetches are then constrained to those hosts before the SSRF guard runs. Undeclared means unrestricted (still SSRF-guarded: loopback / link-local / cloud-metadata always refused).
+
+**Certified-hardware affiliate links.** The certified-hardware page carries disclosed affiliate buy links (`rel="sponsored nofollow"`), and the homepage links to the page.
+
+### Changed
+
+**Playlists "Show auto-generated" toggle now hides "Scheduled:" playlists.** Content-only schedules create a throwaway one-item playlist that was never flagged `is_auto_generated`, so the toggle could not hide it. New ones are flagged at creation and a one-time migration backfills existing rows (structural selector, never the display name). Schedule edits now rewrite the generated playlist's item and garbage-collect the orphan.
+
+The homepage deployed-screens count is labelled "(self-reported, opt-in only)", and the Data Sources empty state no longer names a specific provider ("any public iCal feed").
+
+### Fixed
+
+**No black flash between clips (web player).** Plain solo videos now warm-play muted offscreen and mount on the first presented frame, holding the previous frame instead of blanking the stage while the next clip loads. A configured transition still wipes.
+
+**Portrait panels driven in landscape now fill the screen.** Orientation fit accounts for the panel's native aspect, so a landscape slide on a native-portrait panel (e.g. an 800x1200 room-sign tablet) is rotated to fill instead of letterboxed into a portrait stage.
 
 ## 2.0.10
 

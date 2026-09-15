@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "2.1.0",
+      "date": "2026-09-15",
+      "notes": [
+        "Plugins: a self-hosted node can now add custom widget types, data connectors and event hooks by dropping in a folder and enabling it. It is off by default, and an uploaded plugin does not run until an admin approves that exact copy.",
+        "Upload a PDF and it becomes a playlist automatically, one full-screen slide per page.",
+        "Meeting-room and calendar signs now show Busy, Available, agendas and dates in whatever language you use, and default to English instead of German.",
+        "Dutch is now a full dashboard language.",
+        "Smoother video on the web player, with no brief black flash between clips, and portrait panels driven in landscape now fill the screen instead of showing bars."
+      ]
+    },
+    {
       "version": "2.0.10",
       "date": "2026-09-14",
       "notes": [
