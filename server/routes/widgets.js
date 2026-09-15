@@ -10,6 +10,38 @@ const appConfig = require('../config');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 const { accessContext } = require('../lib/tenancy');
 const { isRealTimezone } = require('../lib/device-timezone');
+const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
+const pluginRegistry = require('../lib/plugins/registry');
+const { BUILTIN_WIDGET_TYPES } = require('../lib/plugins/reserved');
+const { redactSecrets, mergeSecrets, fieldsForWidget, redactConfigJson } = require('../lib/plugins/secrets');
+
+function redactWidgetRow(row) {
+  if (!row) return row;
+  const fields = fieldsForWidget(row.widget_type);
+  const out = { ...row };
+  out.config = redactConfigJson(row.config, fields);
+  if (row.draft_config) {
+    let draft;
+    try { draft = JSON.parse(row.draft_config); } catch { draft = null; }
+    if (draft && draft.config && typeof draft.config === 'object' && !Array.isArray(draft.config)) {
+      const redacted = redactSecrets(draft.config, fields);
+      if (JSON.stringify(redacted) !== JSON.stringify(draft.config)) {
+        out.draft_config = JSON.stringify({ ...draft, config: redacted });
+      }
+    }
+  }
+  return out;
+}
+
+function storedWidgetConfig(widget) {
+  if (widget && widget.draft_config) {
+    try {
+      const draft = JSON.parse(widget.draft_config);
+      if (draft && draft.config && typeof draft.config === 'object') return draft.config;
+    } catch { /* fall through to live config */ }
+  }
+  try { return JSON.parse((widget && widget.config) || '{}'); } catch { return {}; }
+}
 
 // For preview only: inline /api/content/:id/file and /thumbnail URLs as data URIs,
 // scoped to the caller's current workspace. Lets the srcdoc preview iframe show
@@ -43,12 +75,6 @@ function inlineUserContent(html, workspaceId) {
       return `data:${mime};base64,${buf.toString('base64')}`;
     } catch { return match; }
   });
-}
-
-// Escape HTML to prevent XSS
-function escapeHtml(str) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /*
@@ -106,29 +132,7 @@ function safeDateString(d) {
   return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?/.test(d) ? d : '';
 }
 
-// Validate URL is http/https
-function safeUrl(url) {
-  if (!url) return 'about:blank';
-  try {
-    const parsed = new URL(url);
-    return ['http:', 'https:'].includes(parsed.protocol) ? url : 'about:blank';
-  } catch { return 'about:blank'; }
-}
-
-// Security: widget render output is public and CSP-exempt, so config values that
-// get inlined into <style>/CSS must not be able to break out (a config field set
-// via the API could otherwise carry `}</style><script>...`). safeCss allows
-// colors/gradients but rejects breakout/exfil constructs; safeNumber coerces to
-// a finite number (so e.g. font_size can't smuggle markup).
-function safeCss(v, fallback) {
-  if (typeof v !== 'string') return fallback;
-  if (/[<>{}\\;]/.test(v) || /url\s*\(/i.test(v) || /@import/i.test(v) || /expression/i.test(v) || /javascript:/i.test(v)) return fallback;
-  return v.trim().slice(0, 200);
-}
-function safeNumber(v, fallback) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
+// Security: widget render output is public and CSP-exempt — see lib/widget-sanitize.js.
 
 // List widgets accessible to the caller's current workspace, plus any
 // platform-template rows (workspace_id IS NULL) shared with all workspaces.
@@ -139,7 +143,7 @@ router.get('/', (req, res) => {
   const widgets = db.prepare(
     'SELECT * FROM widgets WHERE (workspace_id = ? OR workspace_id IS NULL) ORDER BY created_at DESC'
   ).all(req.workspaceId);
-  res.json(widgets);
+  res.json(widgets.map(redactWidgetRow));
 });
 
 // Create widget in the caller's current workspace.
@@ -147,6 +151,9 @@ router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating widgets.' });
   const { widget_type, name, config } = req.body;
   if (!widget_type || !name) return res.status(400).json({ error: 'widget_type and name required' });
+  if (!pluginRegistry.isAcceptedWidgetType(widget_type)) {
+    return res.status(400).json({ error: 'Unknown widget_type' });
+  }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
 
@@ -155,7 +162,7 @@ router.post('/', (req, res) => {
     .run(id, req.user.id, req.workspaceId, widget_type, name, JSON.stringify(config || {}));
 
   require('../lib/revisions').recordCurrent(db, 'widget', id, { actor: require('../lib/releases').actorOf(req), summary: 'Created' });
-  res.status(201).json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id));
+  res.status(201).json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(id)));
 });
 
 /*
@@ -168,6 +175,14 @@ router.post('/', (req, res) => {
 router.get('/slide-fonts', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.json({ fonts: require('../lib/slide-fonts').catalogue() });
+});
+
+/*
+ * Enabled plugin widget types (plus their field schemas) for the dashboard picker.
+ * Empty when plugins are off. Built-in types stay client-side so i18n does not move.
+ */
+router.get('/plugin-types', (req, res) => {
+  res.json({ types: pluginRegistry.listWidgetTypes() });
 });
 
 // Phase 2.2d: workspace-aware access. Mirrors the device/content pattern.
@@ -205,7 +220,7 @@ function checkWidgetWrite(req, res) {
 router.get('/:id', (req, res) => {
   const widget = checkWidgetRead(req, res);
   if (!widget) return;
-  res.json(widget);
+  res.json(redactWidgetRow(widget));
 });
 
 // Update widget
@@ -213,7 +228,11 @@ router.put('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
   if (!widget) return;
 
-  const { name, config } = req.body;
+  const { name } = req.body;
+  let { config } = req.body;
+  if (config && typeof config === 'object' && !Array.isArray(config)) {
+    config = mergeSecrets(config, storedWidgetConfig(widget), fieldsForWidget(widget.widget_type));
+  }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
 
@@ -231,7 +250,7 @@ router.put('/:id', (req, res) => {
     const draft = { name: name || current.name, config: config || current.config };
     db.prepare('UPDATE widgets SET draft_config = ? WHERE id = ?').run(JSON.stringify(draft), req.params.id);
     revisions.recordCurrent(db, 'widget', req.params.id, { actor, summary: 'Saved draft' });
-    return res.json({ ...db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
+    return res.json({ ...redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id)), draft: true, pending_review: true });
   }
   if (name) db.prepare('UPDATE widgets SET name = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(name, req.params.id);
   if (config) db.prepare('UPDATE widgets SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?').run(JSON.stringify(config), req.params.id);
@@ -260,7 +279,7 @@ router.put('/:id', (req, res) => {
     }
   } catch (e) { /* best-effort; the heartbeat refresh still picks it up */ }
 
-  res.json(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id));
+  res.json(redactWidgetRow(db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id)));
 });
 
 // Delete widget
@@ -271,7 +290,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const KNOWN_WIDGET_TYPES = new Set(['clock','weather','rss','text','webpage','social','directory-board','directory-search','diag-smoothness']);
+const KNOWN_WIDGET_TYPES = new Set(BUILTIN_WIDGET_TYPES);
 function renderWidgetHtml(type, config, opts = {}) {
   const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
@@ -295,7 +314,30 @@ function renderWidgetHtml(type, config, opts = {}) {
       resolveImage: opts.resolveImage, resolveFont: opts.resolveFont,
       resolveData: opts.resolveData, dataSources: opts.dataSources,
     });
-    default: return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
+    default: {
+      const plugin = pluginRegistry.getWidget(type);
+      if (plugin) {
+        try {
+          const html = plugin.render(config, {
+            escapeHtml,
+            safeUrl,
+            safeCss,
+            safeNumber,
+            now: opts.now || new Date(),
+            workspaceId: opts.workspaceId || null,
+            interpolate(text) {
+              return slideRender.interpolateDataSources(String(text == null ? '' : text), opts.resolveData);
+            },
+            resolveImage: typeof opts.resolveImage === 'function' ? opts.resolveImage : () => null,
+            log: (...args) => console.warn(`[plugin:${plugin.pluginId}]`, ...args),
+          });
+          if (typeof html === 'string' && html.length) return html;
+        } catch (e) {
+          console.warn(`[plugins] render failed for type "${type}":`, e.message);
+        }
+      }
+      return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';
+    }
   }
 }
 
@@ -359,6 +401,7 @@ router.get('/:id/render', (req, res) => {
     resolveImage: imageResolverFor(widget),
     resolveFont: require('./fonts').fontResolverFor(widget),
     resolveData: dataResolverFor(widget),
+    workspaceId: widget.workspace_id,
   }));
 });
 
@@ -488,7 +531,7 @@ router.get('/:id/telemetry', (req, res) => {
 router.post('/preview', (req, res) => {
   const { widget_type, config } = req.body || {};
   if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
-  if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
+  if (!KNOWN_WIDGET_TYPES.has(widget_type) && !pluginRegistry.hasWidget(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   // Preview renders inside the DASHBOARD origin, so it never opts into same-origin —
   // see PREVIEW_IFRAME_SANDBOX.
   const resolveData = dataResolverFor(req.workspaceId);
@@ -517,7 +560,7 @@ setInterval(() => {
 router.post('/preview-session', (req, res) => {
   const { widget_type, config } = req.body || {};
   if (!widget_type || typeof widget_type !== 'string') return res.status(400).json({ error: 'widget_type required' });
-  if (!KNOWN_WIDGET_TYPES.has(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
+  if (!KNOWN_WIDGET_TYPES.has(widget_type) && !pluginRegistry.hasWidget(widget_type)) return res.status(400).json({ error: 'Unknown widget_type' });
   const id = uuidv4();
   // Same reasoning as /preview — dashboard origin, never same-origin.
   const resolveData = dataResolverFor(req.workspaceId);

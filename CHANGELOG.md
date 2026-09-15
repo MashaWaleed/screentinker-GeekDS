@@ -4,6 +4,29 @@
 
 ### Added
 
+**A plugin system, off by default.** Self-hosted operators can drop a folder in `DATA_DIR/plugins`,
+enable it as platform admin, and restart, to add widget types, data-source resolvers, optional
+API routes, and named hooks (`device.offline`, `device.online`, `playlist.published`,
+`content.uploaded`, `plugin.submitted`, `plugin.approved`, `plugin.rejected`) without forking core files. Unset `PLUGINS_ENABLED` and the loader does not
+scan, does not `require()` plugin code, and `/api/admin/plugins` 404s. Plugins are trusted local
+code (no sandbox, no marketplace, no phone-home). A broken plugin is marked `error` and does not
+prevent boot. Built-in types cannot be shadowed. Widget plugins render server-side HTML on the
+existing `/api/widgets/:id/render` path. Samples: `plugins/countdown`, `plugins/json-api`,
+`plugins/webhook`. Password fields are never returned by GET; blank PUT keeps the stored secret.
+Documented in `docs/plugins.md`.
+
+**Upload a plugin zip; it does not run until you approve that exact tree.** Workspace editors can
+submit a `.zip` from the dashboard. The archive is inspected against a file allowlist (no zip-slip,
+no symlinks, no `package.json`, no shell scripts) and sits in a quarantine directory the loader
+never scans. Platform admin reviews the file list and `plugin.json` on Admin → Plugins, then
+approves or rejects. Approve copies the tree into `DATA_DIR/plugins` and pins its sha256 on an
+allowlist; it does not enable. Enable + restart still required to `require()`. After that, an edit
+on disk that changes the hash is a load error, not a new payload. Drop-folder installs keep working
+as before; **Pin** locks one of those to a hash the same way. Admin can inspect each file
+(plugin.json and index.js) before approving. This is the human gate, not a
+sandbox — plugins remain trusted code once they load.
+
+
 **Upload a PDF and it becomes a playlist.** Each page is rendered to a full-HD image, the pages land
 in a folder named after the document, and a playlist of the same name plays them in order. A
 16:9 slide deck exported to PDF comes out at exactly 1920x1080; a portrait document shows with side

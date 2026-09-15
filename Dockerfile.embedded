@@ -52,6 +52,9 @@ COPY scripts/ /app/scripts/
 # The BrightSign bridge and sync modules are served to the player from ../brightsign so the copy
 # the player loads can never drift from the one on the player's own storage.
 COPY brightsign/ /app/brightsign/
+# Bundled plugins. Loaded only when PLUGINS_ENABLED=true; operator-installed
+# copies live on the /data volume at $DATA_DIR/plugins.
+COPY plugins/ /app/plugins/
 
 VOLUME ["/data"]
 EXPOSE 3001

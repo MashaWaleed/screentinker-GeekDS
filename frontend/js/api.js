@@ -739,10 +739,11 @@ export const api = {
 
   // Data Sources (iCal, APIs, etc.)
   getDataSources: () => request('/data-sources'),
+  getDataSourcePluginTypes: () => request('/data-sources/plugin-types'),
   getDataSource: (id) => request(`/data-sources/${id}`),
-  testDataSource: (type, config) => request('/data-sources/test', {
+  testDataSource: (type, config, id) => request('/data-sources/test', {
     method: 'POST',
-    body: JSON.stringify({ type, config })
+    body: JSON.stringify(id ? { type, config, id } : { type, config })
   }),
   createDataSource: (data) => request('/data-sources', {
     method: 'POST',

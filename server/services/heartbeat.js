@@ -5,6 +5,7 @@ const statusLogWriter = require('../lib/status-log-writer');
 const { chunkedDelete, currentBand, yieldTick } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
 const { expireStrandedPlays } = require('../lib/play-backfill');
 const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
+const pluginHooks = require('../lib/plugins/hooks');
 
 const liveness = require('../lib/liveness'); // v4 core pass: server-derived 3-state liveness
 
@@ -122,6 +123,7 @@ function startHeartbeatChecker(io) {
         // Offline-cause log: this liveness-timeout path is the "stopped reporting" case —
         // annotate reason/detail and record it in the unified incident feed too.
         statusLogWriter.record(device.id, 'offline_timeout', 'heartbeat_timeout', 'Stopped sending heartbeats');
+        pluginHooks.emit('device.offline', { device_id: device.id, reason: 'heartbeat_timeout' });
         try {
           db.prepare("INSERT INTO device_events (device_id, type, reason, detail) VALUES (?, 'offline', 'heartbeat_timeout', 'Stopped sending heartbeats')")
             .run(device.id);

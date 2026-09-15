@@ -352,6 +352,14 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, updated_at = strftime('%s','now') WHERE id = ?")
     .run(next, structure, playlistId);
   pushToDevices(playlistId, reqOrIo);
+  try {
+    const row = db.prepare('SELECT name, workspace_id FROM playlists WHERE id = ?').get(playlistId);
+    require('../lib/plugins/hooks').emit('playlist.published', {
+      id: playlistId,
+      name: row && row.name,
+      workspace_id: row && row.workspace_id,
+    });
+  } catch (_) { /* plugins off, or a handler threw inside emit's own isolation */ }
 
   /*
    * ⚠️ REPUBLISH PUBLISHED ANCESTORS. Flattening at publish means a parent's snapshot holds a COPY

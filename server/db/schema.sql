@@ -734,3 +734,52 @@ CREATE TABLE IF NOT EXISTS workspace_reviewers (
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     PRIMARY KEY (workspace_id, user_id)
 );
+
+-- Plugin enablement is instance-global (see server/lib/plugins/). Empty on a host that
+-- never sets PLUGINS_ENABLED; CREATE IF NOT EXISTS so a host that never uses plugins
+-- still has a table that does nothing.
+CREATE TABLE IF NOT EXISTS plugin_state (
+    id         TEXT PRIMARY KEY,
+    enabled    INTEGER NOT NULL DEFAULT 0,
+    error      TEXT,
+    loaded_at  INTEGER,
+    settings   TEXT,
+    allowlist_required INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+-- Uploaded plugin packages. Bytes sit in $DATA_DIR/plugin-inbox until approved or rejected.
+-- The loader never scans that directory. Approve copies into $DATA_DIR/plugins and pins the hash.
+CREATE TABLE IF NOT EXISTS plugin_submissions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    plugin_id       TEXT NOT NULL,
+    name            TEXT,
+    version         TEXT,
+    description     TEXT,
+    sha256          TEXT NOT NULL,
+    tree_sha256     TEXT,
+    archive_name    TEXT NOT NULL,
+    manifest_json   TEXT NOT NULL,
+    files_json      TEXT NOT NULL,
+    size_bytes      INTEGER NOT NULL,
+    submitted_by    TEXT NOT NULL,
+    workspace_id    TEXT,
+    submitted_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    status          TEXT NOT NULL DEFAULT 'pending',
+    decided_by      TEXT,
+    decided_at      INTEGER,
+    decision_note   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_submissions_plugin_status
+    ON plugin_submissions(plugin_id, status);
+
+CREATE TABLE IF NOT EXISTS plugin_allowlist (
+    plugin_id      TEXT PRIMARY KEY,
+    sha256         TEXT NOT NULL,
+    source         TEXT NOT NULL,
+    submission_id  INTEGER,
+    approved_by    TEXT NOT NULL,
+    approved_at    INTEGER NOT NULL,
+    note           TEXT
+);

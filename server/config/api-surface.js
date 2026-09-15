@@ -67,6 +67,11 @@ const JWT_ONLY_ROUTERS = [
   { path: '/api/workspaces',  mod: './routes/workspaces' },
   { path: '/api/admin',       mod: './routes/admin' },
   /*
+   * Plugin zip submissions from workspace editors. JWT-only: installing Node is not
+   * something an API token should be able to queue. 404s when PLUGINS_ENABLED is unset.
+   */
+  { path: '/api/plugin-submissions', mod: './routes/plugin-submissions', tenancy: true },
+  /*
    * Server diagnostics for a platform operator: instance shape, the loop-lag history the server has
    * always recorded and never shown, and an in-process CPU profile. JWT-only and gated again inside
    * on requirePlatformAdmin — a workspace owner is not an operator of the host.

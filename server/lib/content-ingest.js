@@ -170,6 +170,14 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, userId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
 
+  try {
+    require('./plugins/hooks').emit('content.uploaded', {
+      content_id: id,
+      workspace_id: workspaceId,
+      mime,
+    });
+  } catch { /* hooks must not fail an upload */ }
+
   return db.prepare('SELECT * FROM content WHERE id = ?').get(id);
 }
 

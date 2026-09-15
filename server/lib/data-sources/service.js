@@ -8,6 +8,8 @@
 
 const { db } = require('../../db/database');
 const { resolveIcalData } = require('./ical-resolver');
+const pluginRegistry = require('../plugins/registry');
+const { guardedRequest } = require('../ssrf-guard');
 
 // Bound how many remote calendar feeds may be in flight at once across the whole
 // process. Data source syncs (and `/test`) can fire several fetches near-simultaneously;
@@ -146,7 +148,44 @@ async function syncDataSource(sourceOrId, force = false) {
     if (row.type === 'ical') {
       resolvedData = await withFetchSlot(() => resolveIcalData(config));
     } else {
-      throw new Error(`Unsupported data source type: ${row.type}`);
+      const plugin = pluginRegistry.getDataSource(row.type);
+      if (!plugin) throw new Error(`Unsupported data source type: ${row.type}`);
+      resolvedData = await withFetchSlot(() => plugin.resolve(config, {
+        workspaceId: row.workspace_id,
+        now: new Date(),
+        log: (...args) => console.warn(`[plugin:${plugin.pluginId}]`, ...args),
+        fetch: (url, opts = {}) => guardedRequest(url, {
+          method: opts.method || 'GET',
+          headers: opts.headers,
+          body: opts.body,
+          timeoutMs: opts.timeoutMs || 10000,
+          maxBytes: opts.maxBytes || 512 * 1024,
+          responseType: opts.responseType || 'text',
+          accept2xx: !!opts.accept2xx,
+        }),
+      }));
+      if (resolvedData == null) {
+        // Plugin signal for 304 / unchanged. Keep the previous cache; do not
+        // write a sentinel and do not bump widget revisions.
+        const doneSec = Math.floor(Date.now() / 1000);
+        db.prepare(`
+          UPDATE data_sources
+          SET last_fetched_at = ?, last_status = 'ok', last_error = NULL
+          WHERE id = ?
+        `).run(doneSec, row.id);
+        let parsedData = null;
+        try { parsedData = JSON.parse(row.cached_data || 'null'); } catch (_) {}
+        return {
+          ...row,
+          last_fetched_at: doneSec,
+          last_status: 'ok',
+          last_error: null,
+          data: parsedData,
+        };
+      }
+      if (typeof resolvedData !== 'object' || Array.isArray(resolvedData)) {
+        throw new Error('data-source plugin must return a plain object');
+      }
     }
 
     // Stamped when the fetch FINISHED. The pre-queue timestamp made a source that waited
@@ -222,29 +261,29 @@ function describeSyncError(err) {
   if (!err) return 'Sync failed';
   const m = String(err.message || '');
   if (err.name === 'SsrfError' || err.code === 'ssrf' || /^blocked:/i.test(m)) {
-    return 'The calendar address is not allowed';
+    return 'The address is not allowed';
   }
   if (err.code === 'timeout' || /timed out/i.test(m)) {
-    return 'The calendar host did not respond in time';
+    return 'The host did not respond in time';
   }
   if (err.code === 'size-limit' || /size limit/i.test(m)) {
-    return 'The calendar feed is too large';
+    return 'The response is too large';
   }
   if (err.code === 'upstream-status' || err.statusCode || /responded (\d{3})|HTTP (\d{3})/i.test(m)) {
     const sc = err.statusCode || (m.match(/responded (\d{3})/i) || [])[1] || (m.match(/HTTP (\d{3})/i) || [])[1] || (m.match(/(\d{3})/) || [])[1];
-    return sc ? `The calendar host responded with HTTP ${sc}` : 'The calendar host responded with an error';
+    return sc ? `The host responded with HTTP ${sc}` : 'The host responded with an error';
   }
   if (err.code === 'too-many-redirects' || err.code === 'bad-redirect') {
-    return 'The calendar host could not be reached';
+    return 'The host could not be reached';
   }
   if (/No valid iCal URL/i.test(m)) {
     return 'No calendar URL or data configured';
   }
   if (/could not be parsed|parse/i.test(m)) {
-    return 'The calendar data could not be parsed';
+    return 'The data could not be parsed';
   }
   if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|EHOSTUNREACH|ENETUNREACH|certificate/i.test(m)) {
-    return 'The calendar host could not be reached';
+    return 'The host could not be reached';
   }
   if (/Unsupported data source type/i.test(m)) {
     return 'Unsupported data source type';
