@@ -167,6 +167,13 @@ jobs:
           # distribution is already present, so the download — and its flake — is skipped.
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          # ⚠️ The action's default is `tools platform-tools`. `tools` is the legacy Android SDK
+          # Tools package, retired in favour of cmdline-tools, and on 2026-09-15 it disappeared
+          # from Google's repository manifest — `sdkmanager tools` started failing on every run,
+          # before a single test executed. Gradle fetches the platform and build-tools it needs
+          # itself; platform-tools is the only thing worth asking the action for.
+          packages: platform-tools
       # ScheduleEvalTest reads the SHARED shared/schedule-vectors.json (wired via
       # the test task in app/build.gradle.kts), so a ScheduleEval.kt change that
       # breaks the contract fails here.
