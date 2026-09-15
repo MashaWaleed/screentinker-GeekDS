@@ -48,6 +48,41 @@ class TransitionGeometryTest {
         assertTrue(TransitionGeometry.rotatedStageMatchesScreen(600, 1024, screenW, screenH, 270))
     }
 
+    @Test fun `orientation mapping on a native-landscape window is unchanged (no fleet regression)`() {
+        // The whole existing fleet is native-landscape (windowPortrait = false). These are the exact
+        // values the old hard-coded mapping returned; if any of them move, working panels break.
+        val land = false
+        assertEquals(0f to false, TransitionGeometry.orientationRotSwap("landscape", land))
+        assertEquals(180f to false, TransitionGeometry.orientationRotSwap("landscape-flipped", land))
+        assertEquals(90f to true, TransitionGeometry.orientationRotSwap("portrait", land))
+        assertEquals(270f to true, TransitionGeometry.orientationRotSwap("portrait-flipped", land))
+        // An unknown / absent orientation still means "landscape", as before.
+        assertEquals(0f to false, TransitionGeometry.orientationRotSwap(null, land))
+        assertEquals(0f to false, TransitionGeometry.orientationRotSwap("", land))
+    }
+
+    @Test fun `orientation mapping on a native-portrait panel rotates landscape instead of letterboxing`() {
+        // The 800x1200 room-sign tablet: windowPortrait = true. A landscape slide must now be
+        // transposed (swap) and quarter-turned so it FILLS the panel, instead of sitting unrotated
+        // in a portrait stage with bars. Portrait content, matching the panel, stays upright.
+        val port = true
+        assertEquals(90f to true, TransitionGeometry.orientationRotSwap("landscape", port))
+        assertEquals(270f to true, TransitionGeometry.orientationRotSwap("landscape-flipped", port))
+        assertEquals(0f to false, TransitionGeometry.orientationRotSwap("portrait", port))
+        assertEquals(180f to false, TransitionGeometry.orientationRotSwap("portrait-flipped", port))
+    }
+
+    @Test fun `the swap decision keeps the rotated stage matching the screen on a portrait panel`() {
+        // End-to-end with the existing invariant: on an 800x1200 window, "landscape" now yields
+        // rot=90/swap, MainActivity sizes the stage to (1200x800), and rotating that by 90 must land
+        // back on the 800x1200 screen box. This is what makes the slide fill the panel.
+        val screenW = 800; val screenH = 1200
+        val (rot, swap) = TransitionGeometry.orientationRotSwap("landscape", windowPortrait = true)
+        val (stageW, stageH) = TransitionGeometry.stageBox(screenW, screenH, swap)
+        assertEquals(1200 to 800, stageW to stageH)
+        assertTrue(TransitionGeometry.rotatedStageMatchesScreen(stageW, stageH, screenW, screenH, rot.toInt()))
+    }
+
     @Test fun `fitting to the wrong box is rejected - the shape of both regressions`() {
         // #326: portrait screen, but the stage box was NOT transposed (device metrics). Rotating a
         // 1024x600 box by 90 gives 600x1024, which is not the 1024x600 screen -> reject, hard-cut.
