@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
-import { t } from '../i18n.js';
+import { t, getAvailableLanguages } from '../i18n.js';
 
 let dataSourcesList = [];
 
@@ -318,8 +318,7 @@ function openEditModal(ds) {
               <div>
                 <label style="display:block;font-size:12px;margin-bottom:4px;color:var(--text-muted)">${esc(t('data_sources.language_label'))}</label>
                 <select id="dsLocaleInput" class="input" style="width:100%">
-                  <option value="de" ${!cfg.locale || cfg.locale === 'de' ? 'selected' : ''}>${esc(t('data_sources.language_de'))}</option>
-                  <option value="en" ${cfg.locale === 'en' ? 'selected' : ''}>${esc(t('data_sources.language_en'))}</option>
+                  ${getAvailableLanguages().map((lang) => `<option value="${esc(lang.code)}" ${(cfg.locale || 'en') === lang.code ? 'selected' : ''}>${esc(lang.name)}</option>`).join('')}
                 </select>
               </div>
               <div>
