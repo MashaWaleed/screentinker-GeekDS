@@ -1459,6 +1459,15 @@ try {
   console.warn('[plugins] loader failed:', e.message);
 }
 
+// One-time (idempotent) encryption of any legacy plaintext secret fields at rest. Runs after the
+// plugin loader so plugin data-source / settings fields are known; iCal's authorization is covered
+// regardless of PLUGINS_ENABLED. New writes already encrypt on save.
+try {
+  require('./lib/plugins/migrate-secrets').migrateSecretsAtRest(require('./db/database').db);
+} catch (e) {
+  console.warn('[plugins] secret-at-rest migration skipped:', e.message);
+}
+
 // Frontend version hash (changes when files are modified, triggers soft reload)
 const crypto = require('crypto');
 let frontendHash = '';

@@ -10,6 +10,7 @@ const { db } = require('../../db/database');
 const { resolveIcalData } = require('./ical-resolver');
 const pluginRegistry = require('../plugins/registry');
 const { makePluginFetch } = require('../plugins/egress');
+const { decryptSecrets, fieldsForDataSource } = require('../plugins/secrets');
 
 // Bound how many remote calendar feeds may be in flight at once across the whole
 // process. Data source syncs (and `/test`) can fire several fetches near-simultaneously;
@@ -125,7 +126,8 @@ async function syncDataSource(sourceOrId, force = false) {
 
   let config = {};
   try {
-    config = JSON.parse(row.config || '{}');
+    // Decrypt secret fields for use (they are stored encrypted at rest).
+    config = decryptSecrets(JSON.parse(row.config || '{}'), fieldsForDataSource(row.type));
   } catch (_) {}
 
   const intervalMin = Math.max(1, parseInt(config.interval_min, 10) || 15);

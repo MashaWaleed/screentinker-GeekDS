@@ -17,6 +17,7 @@ const { isInside, realpathOrNull, pluginRoots } = require('./paths');
 const { RESERVED_WIDGET_TYPES, RESERVED_DATA_SOURCE_TYPES } = require('./reserved');
 const registry = require('./registry');
 const sanitize = require('../widget-sanitize');
+const secrets = require('./secrets');
 const hooks = require('./hooks');
 const { satisfies } = require('./semver');
 const VERSION = require('../../version');
@@ -98,6 +99,7 @@ function makeApi(pluginId, manifest, db) {
   // declared explicitly. Calling an undeclared capability throws, so activatePlugin catches it and
   // rolls the plugin back — the manifest's capabilities list is now a real grant, not a label.
   const caps = new Set(Array.isArray(manifest.capabilities) ? manifest.capabilities : []);
+  const settingsFields = (manifest.settings && manifest.settings.fields) || [];
   const requireCap = (cap, method) => {
     if (!caps.has(cap)) {
       throw new Error(`${method}() requires the "${cap}" capability, which ${pluginId} did not declare`);
@@ -138,12 +140,15 @@ function makeApi(pluginId, manifest, db) {
         const row = db.prepare('SELECT settings FROM plugin_state WHERE id = ?').get(pluginId);
         if (!row || !row.settings) return {};
         const parsed = JSON.parse(row.settings);
-        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        // Secret settings fields are encrypted at rest; decrypt for the plugin's use.
+        return secrets.decryptSecrets(parsed, settingsFields);
       } catch { return {}; }
     },
     saveSettings(obj) {
       if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('settings must be an object');
-      const json = JSON.stringify(obj);
+      // Encrypt secret settings fields at rest.
+      const json = JSON.stringify(secrets.encryptSecrets(obj, settingsFields));
       if (json.length > 32 * 1024) throw new Error('settings too large');
       db.prepare(`
         INSERT INTO plugin_state (id, enabled, settings, updated_at)

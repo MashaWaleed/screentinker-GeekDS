@@ -62,6 +62,50 @@ function mergeSecrets(incoming, existing, fields) {
   return next;
 }
 
+// ---- Encryption at rest --------------------------------------------------------------------
+// Secret FIELD values are stored encrypted (AES-256-GCM via lib/secretbox, key derived from the
+// instance JWT secret). A stored secret carries the marker below so its state is self-describing:
+// a value with the marker is ciphertext, anything else is legacy plaintext (migrated on next write,
+// or by the one-time pass in db/database.js). Rotating JWT_SECRET makes ciphertext undecryptable;
+// decrypt then yields '' and the operator re-enters the secret -- matches BYOK AI keys (#41).
+const ENC_PREFIX = 'enc:v1:';
+const secretbox = require('../secretbox');
+
+/** Encrypt the secret fields of [cfg] in place-of a copy. Blank / already-encrypted values pass. */
+function encryptSecrets(cfg, fields) {
+  const out = { ...(cfg && typeof cfg === 'object' ? cfg : {}) };
+  for (const name of secretNames(fields)) {
+    const v = out[name];
+    if (v == null || v === '' || (typeof v === 'string' && v.startsWith(ENC_PREFIX))) continue;
+    const enc = secretbox.encrypt(String(v));
+    if (enc) out[name] = ENC_PREFIX + enc;
+  }
+  return out;
+}
+
+/** Decrypt the secret fields of [cfg]. Ciphertext -> plaintext; legacy plaintext passes unchanged;
+ *  ciphertext that will not decrypt (rotated key) becomes '' so it reads as "needs re-entry". */
+function decryptSecrets(cfg, fields) {
+  const out = { ...(cfg && typeof cfg === 'object' ? cfg : {}) };
+  for (const name of secretNames(fields)) {
+    const v = out[name];
+    if (typeof v !== 'string' || !v.startsWith(ENC_PREFIX)) continue; // legacy plaintext or absent
+    const plain = secretbox.decrypt(v.slice(ENC_PREFIX.length));
+    out[name] = plain == null ? '' : plain;
+  }
+  return out;
+}
+
+/** True if any secret field in [cfg] is still legacy plaintext (used by the one-time migration). */
+function hasPlaintextSecret(cfg, fields) {
+  if (!cfg || typeof cfg !== 'object') return false;
+  for (const name of secretNames(fields)) {
+    const v = cfg[name];
+    if (typeof v === 'string' && v !== '' && !v.startsWith(ENC_PREFIX)) return true;
+  }
+  return false;
+}
+
 function redactConfigJson(json, fields) {
   let cfg;
   try { cfg = JSON.parse(json || '{}'); } catch { return json; }
@@ -81,7 +125,11 @@ module.exports = {
   secretNames,
   redactSecrets,
   mergeSecrets,
+  encryptSecrets,
+  decryptSecrets,
+  hasPlaintextSecret,
   fieldsForDataSource,
   fieldsForWidget,
   redactConfigJson,
+  ENC_PREFIX,
 };
