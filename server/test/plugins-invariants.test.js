@@ -167,9 +167,16 @@ test('test_no_phone_home (P4)', () => {
     const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     assert.doesNotMatch(stripped, /screentinker\.com/,
       `${file} must not name screentinker.com (P4)`);
-    if (file === 'load.js') {
+    if (file === 'egress.js') {
       assert.match(stripped, /guardedRequest/,
-        'plugin api.fetch must be the SSRF-guarded helper, not global fetch');
+        'egress.js must route plugin fetches through the SSRF-guarded helper');
+      continue;
+    }
+    if (file === 'load.js') {
+      assert.match(stripped, /makePluginFetch/,
+        'plugin api.fetch must be the guarded egress helper, not global fetch');
+      assert.doesNotMatch(stripped, /[^.]\bfetch\s*\(/,
+        'load.js must not call a bare global fetch()');
       assert.doesNotMatch(stripped, /https?:\/\/[^\s'"]*registry/,
         'load.js must not fetch a plugin registry');
       continue;
@@ -458,7 +465,7 @@ test('widget plugin render ctx interpolates data sources and resolves images', (
 
 test('data-source plugin resolve is handed the SSRF-guarded fetch', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'data-sources', 'service.js'), 'utf8');
-  assert.match(src, /fetch: \(url, opts = \{\}\) => guardedRequest/);
+  assert.match(src, /fetch: makePluginFetch\(/);
   assert.match(src, /resolvedData == null/);
 });
 

@@ -4,6 +4,18 @@ A self-hosted ScreenTinker node can load **trusted local plugins**: extra widget
 data-source resolvers, optional API routes, and a small set of named hooks, without forking
 `routes/widgets.js`.
 
+> ### Trust model: this is not a sandbox
+>
+> A loaded plugin runs **in the server process via `require()`, with full Node privileges** — the
+> same as any file under `server/lib`. There is no VM, worker, or capability confinement at runtime.
+> The security of the system is therefore **gatekeeping, not isolation**: code runs only after a
+> platform admin has approved that exact tree (pinned by sha256) or an operator with shell access
+> has dropped it in and enabled it. Treat installing a plugin as equivalent to editing the server's
+> own source. **Never** relax the approval gate to auto-run uploaded code, and do not describe this
+> as a sandbox anywhere. The manifest `network` allowlist (below) narrows what a plugin's own
+> `api.fetch` may reach, but it is a guardrail for honest plugins, not a boundary against hostile
+> ones — a plugin that wanted to could bypass it with raw `require('http')`.
+
 If a change appears to require breaking one of the invariants below, **stop**. It is not a judgement
 call to make inside a PR.
 
@@ -103,6 +115,24 @@ never settles. Kick off background work from a hook or from `resolve()`, not fro
 
 `plugin.json` may set `"screentinker": ">=2.0.0"`. Only `>=x.y.z` is understood; any other string
 is a warning and a pass.
+
+### Network egress (optional)
+
+A plugin may declare the hosts its fetches are allowed to reach:
+
+```json
+"network": { "allow": ["api.weather.com", "*.example.com"] }
+```
+
+When declared, every fetch the plugin makes (`api.fetch`, and the `fetch` handed to a data-source
+`resolve()`) is checked against the list before the SSRF guard runs; a host not on the list is
+refused with `egress-not-allowed`. A `*.` prefix matches one-or-more leading labels
+(`*.example.com` matches `a.example.com`, not the bare `example.com`). When **absent**, egress is
+unrestricted (still SSRF-guarded: loopback / link-local / cloud-metadata are always refused) —
+because plugins like `json-api` and `webhook` fetch an operator-supplied URL at any host, which a
+static list cannot express. So the allowlist is an opt-in guardrail an honest plugin uses to
+constrain itself, visible in the manifest a platform admin reviews at approval. It is **not** a
+boundary against a hostile plugin (see the trust-model note at the top).
 
 ### `activate(api)`
 

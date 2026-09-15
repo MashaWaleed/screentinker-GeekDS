@@ -377,5 +377,5 @@ function guardedRequest(urlString, options = {}) {
   return follow(urlString, maxRedirects);
 }
 
-module.exports = { parseSafeUrl, assertSafeUrl, isBlockedIp, isBlockedV4, isBlockedV6, pinnedLookup, SsrfError, GuardedRequestError, guardedRequest };
+module.exports = { parseSafeUrl, assertSafeUrl, isBlockedIp, isBlockedV4, isBlockedV6, pinnedLookup, SsrfError, GuardedRequestError, guardedRequest, stripSensitiveHeaders };
 

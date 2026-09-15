@@ -20,7 +20,7 @@ const sanitize = require('../widget-sanitize');
 const hooks = require('./hooks');
 const { satisfies } = require('./semver');
 const VERSION = require('../../version');
-const { guardedRequest } = require('../ssrf-guard');
+const { makePluginFetch } = require('./egress');
 const allowlist = require('./allowlist');
 
 function readStateMap(db) {
@@ -112,6 +112,7 @@ function makeApi(pluginId, manifest, db) {
         fields: spec.fields || (manifest.widget && manifest.widget.fields) || [],
         label: spec.label || (manifest.widget && manifest.widget.label),
         icon: spec.icon || (manifest.widget && manifest.widget.icon),
+        network: manifest.network,
       };
       registry.registerWidget(pluginId, merged);
     },
@@ -123,31 +124,15 @@ function makeApi(pluginId, manifest, db) {
         fields: spec.fields || (manifest.dataSource && manifest.dataSource.fields) || [],
         label: spec.label || (manifest.dataSource && manifest.dataSource.label),
         icon: spec.icon || (manifest.dataSource && manifest.dataSource.icon),
+        network: manifest.network,
       };
       registry.registerDataSource(pluginId, merged);
     },
     registerRouter(router) { requireCap('routes', 'registerRouter'); registry.registerRouter(pluginId, router); },
     on(name, fn) { requireCap('hooks', 'on'); hooks.register(pluginId, name, fn); },
     log(...args) { console.warn(`[plugin:${pluginId}]`, ...args); },
-    fetch(url, opts = {}) {
-      const headers = { ...(opts.headers || {}) };
-      let body = opts.body;
-      if (body && typeof body === 'object' && !Buffer.isBuffer(body)) {
-        body = JSON.stringify(body);
-        if (!headers['content-type'] && !headers['Content-Type']) {
-          headers['content-type'] = 'application/json';
-        }
-      }
-      return guardedRequest(url, {
-        method: opts.method || 'GET',
-        headers,
-        body,
-        timeoutMs: opts.timeoutMs || 8000,
-        maxBytes: opts.maxBytes || 64 * 1024,
-        responseType: opts.responseType || 'text',
-        accept2xx: opts.accept2xx !== false,
-      });
-    },
+    // Egress goes through the plugin's declared network.allow list (if any) and then the SSRF guard.
+    fetch: makePluginFetch(manifest.network && manifest.network.allow, { timeoutMs: 8000, maxBytes: 64 * 1024, responseType: 'text' }),
     getSettings() {
       try {
         const row = db.prepare('SELECT settings FROM plugin_state WHERE id = ?').get(pluginId);
