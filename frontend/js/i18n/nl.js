@@ -135,7 +135,7 @@ export default {
     'data_sources.add_new': 'Nieuwe gegevensbron',
     'data_sources.empty_title': 'Geen gegevensbronnen gekoppeld',
     'data_sources.empty_desc':
-        "Koppel een iCal-/Webcal-agendalink van Google Calendar, Outlook, Apple Calendar of je afvalophaler om live de status van ruimtes, agenda's en planningen weer te geven.",
+        "Koppel een iCal-/Webcal-agendalink van Google Calendar, Outlook, Apple Calendar of een openbare iCal-feed om live de status van ruimtes, agenda's en planningen weer te geven.",
     'data_sources.add_first': 'Eerste gegevensbron koppelen',
     'data_sources.view_variables': 'Sjabloonvariabelen bekijken',
     'data_sources.sync_now': 'Nu synchroniseren',

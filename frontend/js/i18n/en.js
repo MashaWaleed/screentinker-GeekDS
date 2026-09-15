@@ -120,7 +120,7 @@ export default {
   'data_sources.subtitle': 'Connect external calendars (.ics/Webcal) and APIs. Bind dynamic values to your slides with {{ds:slug.field}}.',
   'data_sources.add_new': 'New Data Source',
   'data_sources.empty_title': 'No Data Sources Connected',
-  'data_sources.empty_desc': 'Connect an iCal / Webcal calendar link from Google Calendar, Outlook, Apple Calendar, or your waste disposal provider to display live room status, agendas, and schedules.',
+  'data_sources.empty_desc': 'Connect an iCal / Webcal calendar link from Google Calendar, Outlook, Apple Calendar, or any public iCal feed to display live room status, agendas, and schedules.',
   'data_sources.add_first': 'Connect First Data Source',
   'data_sources.view_variables': 'View Template Variables',
   'data_sources.sync_now': 'Sync Now',
