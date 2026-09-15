@@ -15,7 +15,7 @@ const { parseSafeUrl } = require('../lib/ssrf-guard');
 const { makePluginFetch } = require('../lib/plugins/egress');
 const { isRealTimezone } = require('../lib/device-timezone');
 const pluginRegistry = require('../lib/plugins/registry');
-const { redactSecrets, mergeSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
+const { redactSecrets, mergeSecrets, encryptSecrets, decryptSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
 
 function isSupportedDataSourceType(type) {
   return type === 'ical' || pluginRegistry.hasDataSource(type);
@@ -176,7 +176,7 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
       .get(req.body.id, req.workspaceId);
     if (existing) {
       let prev = {};
-      try { prev = JSON.parse(existing.config); } catch (_) {}
+      try { prev = decryptSecrets(JSON.parse(existing.config), fieldsForDataSource(existing.type || type)); } catch (_) {}
       // Only back-fill a stored secret when this test targets the SAME destination the secret was
       // saved for. GET redacts secrets from everyone (see sanitizeConfigForRole), so without this a
       // workspace writer could point an existing source at their own URL, have the stored token
@@ -260,7 +260,9 @@ router.post('/', requireWorkspaceWrite, (req, res) => {
   }
 
   const id = `ds_${crypto.randomUUID()}`;
-  const configJson = JSON.stringify(parsedConfig);
+  // Secret fields are encrypted at rest; the plaintext parsedConfig is kept only for the response
+  // (where sanitizeConfigForRole redacts it anyway).
+  const configJson = JSON.stringify(encryptSecrets(parsedConfig, fieldsForDataSource(type)));
   const nowSec = Math.floor(Date.now() / 1000);
 
   db.prepare(`
@@ -307,6 +309,7 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
 
   let configJson = existing.config;
   let parsedConfig = null;
+  let plaintextChanged = false;
   if (config !== undefined) {
     parsedConfig = config;
     if (typeof config === 'string') {
@@ -320,12 +323,15 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
     if (valErr) {
       return res.status(400).json({ error: valErr });
     }
+    const fields = fieldsForDataSource(existing.type);
     let prev = {};
-    try { prev = JSON.parse(existing.config); } catch (_) {}
-    parsedConfig = mergeSecrets(parsedConfig, prev, fieldsForDataSource(existing.type));
-    configJson = JSON.stringify(parsedConfig);
+    try { prev = decryptSecrets(JSON.parse(existing.config), fields); } catch (_) {}
+    // Merge against DECRYPTED stored secrets so a blank incoming secret keeps the real value.
+    parsedConfig = mergeSecrets(parsedConfig, prev, fields);
+    plaintextChanged = JSON.stringify(parsedConfig) !== JSON.stringify(prev);
+    configJson = JSON.stringify(encryptSecrets(parsedConfig, fields)); // re-encrypt for storage
   } else {
-    try { parsedConfig = JSON.parse(configJson); } catch (_) {}
+    try { parsedConfig = decryptSecrets(JSON.parse(configJson), fieldsForDataSource(existing.type)); } catch (_) {}
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -336,8 +342,9 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
     WHERE id = ? AND workspace_id = ?
   `).run(cleanName, cleanSlug, configJson, nowSec, req.params.id, wsId);
 
-  // Trigger refresh with new config in background ONLY if config actually changed
-  const configChanged = config !== undefined && configJson !== existing.config;
+  // Trigger refresh only if the config's plaintext actually changed (encryption is non-deterministic,
+  // so a ciphertext comparison would always look "changed").
+  const configChanged = plaintextChanged;
   if (configChanged) {
     const updatedRow = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(req.params.id);
     syncDataSource(updatedRow, true).catch(err => {

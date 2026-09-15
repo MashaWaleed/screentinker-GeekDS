@@ -21,7 +21,7 @@ const config = require('../config');
 const { db } = require('../db/database');
 const registry = require('../lib/plugins/registry');
 const { logActivity, getClientIp } = require('../services/activity');
-const { redactSecrets, mergeSecrets } = require('../lib/plugins/secrets');
+const { redactSecrets, mergeSecrets, encryptSecrets, decryptSecrets } = require('../lib/plugins/secrets');
 const submissions = require('../lib/plugins/submissions');
 const allowlist = require('../lib/plugins/allowlist');
 const { MAX_ARCHIVE_BYTES } = require('../lib/plugins/inbox');
@@ -295,8 +295,9 @@ router.put('/:id/settings', (req, res) => {
     return res.status(400).json({ error: 'settings must be an object' });
   }
   const fields = plugin.settingsFields || [];
-  const merged = mergeSecrets(incoming, storedSettings(id), fields);
-  const json = JSON.stringify(merged);
+  // Merge against DECRYPTED stored secrets (blank incoming keeps the real value), then re-encrypt.
+  const merged = mergeSecrets(incoming, decryptSecrets(storedSettings(id), fields), fields);
+  const json = JSON.stringify(encryptSecrets(merged, fields));
   if (json.length > 32 * 1024) return res.status(400).json({ error: 'settings too large' });
   try {
     db.prepare(`

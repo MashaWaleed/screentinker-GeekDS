@@ -134,6 +134,14 @@ static list cannot express. So the allowlist is an opt-in guardrail an honest pl
 constrain itself, visible in the manifest a platform admin reviews at approval. It is **not** a
 boundary against a hostile plugin (see the trust-model note at the top).
 
+### Secrets at rest
+
+Secret fields (type `password`, `secret: true`, or a credential-looking name) in a data source's
+config and in a plugin's saved settings are **encrypted at rest** (AES-256-GCM via `lib/secretbox`,
+key derived from the instance JWT secret). Non-secret config stays readable. Rotating `JWT_SECRET`
+makes stored secrets undecryptable — they read back empty and must be re-entered. Existing plaintext
+rows are encrypted in place by a one-time migration at boot.
+
 ### `activate(api)`
 
 ```js
