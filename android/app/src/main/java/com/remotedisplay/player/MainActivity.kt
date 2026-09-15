@@ -31,6 +31,7 @@ import com.remotedisplay.player.data.ContentCache
 import com.remotedisplay.player.data.ServerConfig
 import com.remotedisplay.player.player.MediaPlayerManager
 import com.remotedisplay.player.player.TransitionGLView
+import com.remotedisplay.player.player.TransitionGeometry
 import com.remotedisplay.player.player.TransitionGlsl
 import com.remotedisplay.player.player.PlaylistController
 import com.remotedisplay.player.player.PlaylistItem
@@ -542,13 +543,13 @@ class MainActivity : AppCompatActivity() {
         applyOrientation(currentOrientation ?: "landscape")
     }
 
-    // #344: (rotation, transpose?) for an orientation string. One source, shared by applyOrientation
-    // and the initial transition-stage push so the two can never disagree on what "portrait" means.
-    private fun orientationRotSwap(o: String?): Pair<Float, Boolean> = when (o) {
-        "portrait" -> 90f to true
-        "portrait-flipped" -> 270f to true
-        "landscape-flipped" -> 180f to false
-        else -> 0f to false   // landscape
+    // (rotation, transpose?) for an orientation string, resolved against the panel's own window
+    // aspect so a native-portrait panel rotates a landscape slide instead of letterboxing it. One
+    // source (TransitionGeometry.orientationRotSwap), shared by applyOrientation and the initial
+    // transition-stage push so the two can never disagree on what "portrait" means.
+    private fun orientationRotSwap(o: String?): Pair<Float, Boolean> {
+        val (w, h) = windowSize()
+        return TransitionGeometry.orientationRotSwap(o, h > w)
     }
 
     private fun applyOrientation(orientation: String) {
@@ -559,7 +560,9 @@ class MainActivity : AppCompatActivity() {
         currentOrientation = orientation
         appliedStageW = w
         appliedStageH = h
-        val (rot, swap) = orientationRotSwap(orientation)
+        // Decide rot/swap from the SAME (w, h) this method sizes the stage with, so the two cannot
+        // disagree if the window changes between measurements.
+        val (rot, swap) = TransitionGeometry.orientationRotSwap(orientation, h > w)
         val lp = rootView.layoutParams
         lp.width = (if (swap) h else w).toInt()
         lp.height = (if (swap) w else h).toInt()

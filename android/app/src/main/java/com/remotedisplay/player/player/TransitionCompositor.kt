@@ -84,6 +84,36 @@ object TransitionGeometry {
     fun swapForRotation(rotDeg: Int): Boolean = ((rotDeg % 360) + 360) % 360 == 90 || ((rotDeg % 360) + 360) % 360 == 270
 
     /**
+     * (rotation°, swap-axes?) to present the composition named by [o] upright on a window that is
+     * [windowPortrait]. The four strings name what the OPERATOR chose — landscape / portrait, each
+     * optionally flipped — while the rotation actually needed to show it upright depends on the
+     * panel's OWN window orientation, which earlier code assumed was always landscape.
+     *
+     * Axes are swapped exactly when the wanted composition's orientation differs from the window's.
+     * So a landscape slide on a native-PORTRAIT panel (e.g. an 800x1200 room-sign tablet driven in
+     * landscape) finally gets the quarter turn the native-landscape assumption skipped — the bug
+     * that letterboxed a landscape slide into a portrait stage, leaving bars and unfilled space.
+     *
+     * ⚠️ On a native-landscape (or square) window this returns EXACTLY the values it always did
+     * (landscape->0/no-swap, landscape-flipped->180/no-swap, portrait->90/swap, portrait-flipped->
+     * 270/swap), so no currently-working panel changes behaviour. The swap case keeps rot at 90 vs
+     * 270 by the flipped flag; if a native-portrait panel comes out upside down, the operator's
+     * "-flipped" choice is the other one, same as it has always been for portrait signage.
+     */
+    fun orientationRotSwap(o: String?, windowPortrait: Boolean): Pair<Float, Boolean> {
+        val wantPortrait = o == "portrait" || o == "portrait-flipped"
+        val flipped = o == "landscape-flipped" || o == "portrait-flipped"
+        val swap = wantPortrait != windowPortrait
+        val rot = when {
+            !swap && !flipped -> 0f
+            !swap && flipped -> 180f
+            swap && !flipped -> 90f
+            else -> 270f
+        }
+        return rot to swap
+    }
+
+    /**
      * The invariant the reporter asked for: the box the bitmaps were fitted to (once rotated) must
      * equal the surface they are drawn on. Rotating the stage box by 90/270 must give the screen box;
      * 0/180 leaves it. A mismatch means we fitted to the wrong thing and MUST hard-cut, not wipe.
