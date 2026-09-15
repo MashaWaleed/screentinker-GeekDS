@@ -62,6 +62,7 @@ function registerWidget(pluginId, spec) {
     fields: Array.isArray(spec.fields) ? spec.fields : [],
     label: spec.label || spec.type,
     icon: spec.icon || '🔌',
+    network: spec.network || null,
   });
 }
 
@@ -82,6 +83,7 @@ function registerDataSource(pluginId, spec) {
     fields: Array.isArray(spec.fields) ? spec.fields : [],
     label: spec.label || spec.type,
     icon: spec.icon || '🔗',
+    network: spec.network || null,
   });
 }
 

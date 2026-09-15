@@ -9,7 +9,7 @@
 const { db } = require('../../db/database');
 const { resolveIcalData } = require('./ical-resolver');
 const pluginRegistry = require('../plugins/registry');
-const { guardedRequest } = require('../ssrf-guard');
+const { makePluginFetch } = require('../plugins/egress');
 
 // Bound how many remote calendar feeds may be in flight at once across the whole
 // process. Data source syncs (and `/test`) can fire several fetches near-simultaneously;
@@ -154,15 +154,7 @@ async function syncDataSource(sourceOrId, force = false) {
         workspaceId: row.workspace_id,
         now: new Date(),
         log: (...args) => console.warn(`[plugin:${plugin.pluginId}]`, ...args),
-        fetch: (url, opts = {}) => guardedRequest(url, {
-          method: opts.method || 'GET',
-          headers: opts.headers,
-          body: opts.body,
-          timeoutMs: opts.timeoutMs || 10000,
-          maxBytes: opts.maxBytes || 512 * 1024,
-          responseType: opts.responseType || 'text',
-          accept2xx: !!opts.accept2xx,
-        }),
+        fetch: makePluginFetch(plugin.network && plugin.network.allow, { timeoutMs: 10000, maxBytes: 512 * 1024, responseType: 'text' }),
       }));
       if (resolvedData == null) {
         // Plugin signal for 304 / unchanged. Keep the previous cache; do not

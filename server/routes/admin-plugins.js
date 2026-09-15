@@ -27,6 +27,13 @@ const allowlist = require('../lib/plugins/allowlist');
 const { MAX_ARCHIVE_BYTES } = require('../lib/plugins/inbox');
 const { rescan } = require('../lib/plugins/load');
 const { isInside } = require('../lib/plugins/paths');
+const { requirePlatformAdmin } = require('../middleware/auth');
+
+// Defense in depth. This router is mounted behind requirePlatformAdmin in routes/admin.js, but every
+// handler here is a code-install / enable primitive, so it re-asserts the check itself: if this
+// sub-router is ever re-mounted elsewhere, or that one mount line is refactored, the install/enable
+// routes do not silently become reachable by any authenticated user.
+router.use(requirePlatformAdmin);
 
 const upload = multer({
   storage: multer.memoryStorage(),

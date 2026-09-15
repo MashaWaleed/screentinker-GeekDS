@@ -76,6 +76,17 @@ function validateManifest(raw, dirName) {
     if (fieldErr) return { error: 'settings.' + fieldErr };
     settings = { fields: Array.isArray(raw.settings.fields) ? raw.settings.fields : [] };
   }
+  // Optional egress allowlist: network.allow is a list of hostnames / "*." wildcards this plugin's
+  // fetches may reach (see lib/plugins/egress.js). Absent = unrestricted (still SSRF-guarded).
+  let network = null;
+  if (raw.network && typeof raw.network === 'object') {
+    if (raw.network.allow != null) {
+      if (!Array.isArray(raw.network.allow) || !raw.network.allow.every((h) => typeof h === 'string' && h.length && h.length <= 253)) {
+        return { error: 'network.allow must be an array of hostname strings' };
+      }
+      network = { allow: raw.network.allow };
+    }
+  }
   return {
     manifest: {
       id,
@@ -87,6 +98,7 @@ function validateManifest(raw, dirName) {
       widget,
       dataSource,
       settings,
+      network,
       screentinker: typeof raw.screentinker === 'string' ? raw.screentinker : null,
     },
   };

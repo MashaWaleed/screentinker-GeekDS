@@ -11,7 +11,8 @@ const { db } = require('../db/database');
 const { syncDataSource, withFetchSlot, bumpDependentWidgets } = require('../lib/data-sources/service');
 const { resolveIcalData } = require('../lib/data-sources/ical-resolver');
 const { requireWorkspaceWrite, canWrite } = require('../lib/permissions');
-const { parseSafeUrl, guardedRequest } = require('../lib/ssrf-guard');
+const { parseSafeUrl } = require('../lib/ssrf-guard');
+const { makePluginFetch } = require('../lib/plugins/egress');
 const { isRealTimezone } = require('../lib/device-timezone');
 const pluginRegistry = require('../lib/plugins/registry');
 const { redactSecrets, mergeSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
@@ -198,13 +199,7 @@ router.post('/test', requireWorkspaceWrite, async (req, res, next) => {
         workspaceId: req.workspaceId,
         now: new Date(),
         log: (...args) => console.warn(`[plugin:${plugin.pluginId}]`, ...args),
-        fetch: (url, opts = {}) => guardedRequest(url, {
-          method: opts.method || 'GET',
-          headers: opts.headers,
-          timeoutMs: opts.timeoutMs || 10000,
-          maxBytes: opts.maxBytes || 512 * 1024,
-          responseType: opts.responseType || 'text',
-        }),
+        fetch: makePluginFetch(plugin.network && plugin.network.allow, { timeoutMs: 10000, maxBytes: 512 * 1024, responseType: 'text' }),
       }));
     }
 
