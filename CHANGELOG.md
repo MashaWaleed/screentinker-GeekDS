@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Upload a PDF and it becomes a playlist.** Each page is rendered to a full-HD image, the pages land
+in a folder named after the document, and a playlist of the same name plays them in order. A
+16:9 slide deck exported to PDF comes out at exactly 1920x1080; a portrait document shows with side
+bars on a landscape screen, which is what every other CMS does with a PDF and is the right outcome.
+Text becomes pixels, so it is no longer searchable or editable, and the pages take the usual image
+duration until you change it.
+
+⚠️ The rendering happens in the uploader's browser, not on the server. The server never parses a
+PDF, gains no PDF dependency, and its upload allowlist is exactly as strict as before — the pages
+arrive as ordinary PNGs through the ordinary path. That is deliberate: every server-side renderer
+that is not copyleft needs either a canvas shim or a headless browser, and a PDF parser is a large
+thing to bolt onto an upload endpoint. pdf.js (Apache-2.0) is vendored under `frontend/vendor/pdfjs/`
+with its codec licences beside it, and loaded only when a PDF is actually uploaded. The dashboard
+CSP gains `'wasm-unsafe-eval'` for the image codecs; that permits WebAssembly compilation only,
+not `eval`.
+
 ## 2.0.10
 
 ### Added

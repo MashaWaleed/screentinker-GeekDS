@@ -5,6 +5,7 @@ import { esc, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
 import { openHistoryModal } from '../components/history-modal.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
+import { isPdf, renderPdfToPages, baseName } from '../components/pdf-pages.js';
 
 /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Kept as a constant rather than
  * spelled out at each site: it is compared in three places here, and a typo in one of them is a
@@ -72,7 +73,7 @@ export function render(container) {
         </svg>
         <p>${t('content.drop')}</p>
         <p class="upload-hint">${t('content.upload_hint')}</p>
-        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*,audio/*,.zip,.wgt">
+        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*,audio/*,.zip,.wgt,.pdf,application/pdf">
         <div class="upload-progress" id="uploadProgress" style="display:none">
           <div class="upload-progress-bar">
             <div class="upload-progress-fill" id="uploadProgressFill" style="width:0%"></div>
@@ -274,36 +275,84 @@ const state = {
 };
 
 async function handleFiles(files) {
-  const list = Array.from(files);
-  if (list.length === 0) return;
+  const all = Array.from(files);
+  if (all.length === 0) return;
   const progress = document.getElementById('uploadProgress');
   const progressFill = document.getElementById('uploadProgressFill');
   const progressText = document.getElementById('uploadProgressText');
+
+  // A PDF is not uploaded as a PDF. It is rendered to one PNG per page in this browser and those
+  // go up as ordinary images, into a folder and a playlist named after the document. The server
+  // never sees the PDF and does not accept one — see components/pdf-pages.js for why.
+  const pdfs = all.filter(isPdf);
+  const list = all.filter((f) => !isPdf(f));
 
   // #212: send all selected files in a single request with aggregate progress, instead
   // of one sequential XHR per file.
   progress.style.display = 'block';
   progressFill.style.width = '0%';
-  const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
-  progressText.textContent = label;
 
   try {
-    await api.uploadContent(list, (pct) => {
-      progressFill.style.width = pct + '%';
-      progressText.textContent = `${label} — ${pct}%`;
-    }, state.currentFolderId);
-    showToast(
-      list.length === 1
-        ? t('content.toast.uploaded_named', { name: list[0].name })
-        : t('content.toast.uploaded_count', { count: list.length }),
-      'success'
-    );
+    for (const pdf of pdfs) await importPdf(pdf, progressFill, progressText);
+    if (list.length) {
+      const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
+      progressText.textContent = label;
+      await api.uploadContent(list, (pct) => {
+        progressFill.style.width = pct + '%';
+        progressText.textContent = `${label} — ${pct}%`;
+      }, state.currentFolderId);
+      showToast(
+        list.length === 1
+          ? t('content.toast.uploaded_named', { name: list[0].name })
+          : t('content.toast.uploaded_count', { count: list.length }),
+        'success'
+      );
+    }
   } catch (err) {
+    const label = all.length === 1 ? all[0].name : t('content.upload_progress_count', { count: all.length });
     showToast(t('content.toast.upload_failed_named', { name: label, error: err.message }), 'error');
   }
 
   progress.style.display = 'none';
   loadContent();
+}
+
+/**
+ * One PDF → a folder of page images + a playlist that plays them in order.
+ *
+ * Rendering is the first half of the progress bar, uploading the second. The folder is a
+ * nicety and the playlist is the feature, so a folder that cannot be created (no workspace, or
+ * the per-workspace folder cap) falls back to the current folder rather than failing the import,
+ * and a playlist that cannot be created after the pages are up reports THAT rather than pretending
+ * the upload failed — the images exist and the user should know it.
+ */
+async function importPdf(file, progressFill, progressText) {
+  const base = baseName(file.name).slice(0, 100);
+  progressText.textContent = t('content.pdf.rendering', { name: base, done: 0, total: '…' });
+  const pages = await renderPdfToPages(file, (done, total) => {
+    progressFill.style.width = Math.round((done / total) * 50) + '%';
+    progressText.textContent = t('content.pdf.rendering', { name: base, done, total });
+  });
+
+  let folderId = state.currentFolderId;
+  try {
+    folderId = (await api.createFolder(base, state.currentFolderId)).id;
+  } catch (_) { /* fall through: pages land in the current folder instead */ }
+
+  const uploaded = await api.uploadContent(pages, (pct) => {
+    progressFill.style.width = (50 + Math.round(pct / 2)) + '%';
+    progressText.textContent = t('content.pdf.uploading', { name: base, pct });
+  }, folderId);
+  const items = Array.isArray(uploaded) ? uploaded : [uploaded];
+
+  try {
+    const playlist = await api.createPlaylist(base,
+      t('content.pdf.playlist_description', { name: file.name, count: items.length }));
+    await api.addPlaylistItemsBulk(playlist.id, items.map((c) => c.id));
+    showToast(t('content.toast.pdf_imported', { name: base, count: items.length }), 'success');
+  } catch (err) {
+    showToast(t('content.toast.pdf_playlist_failed', { name: base, count: items.length, error: err.message }), 'error');
+  }
 }
 
 async function loadContent() {

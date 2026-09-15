@@ -114,7 +114,11 @@ const dashboardCsp = helmet.contentSecurityPolicy({
     // Cloudflare Web Analytics: the beacon SCRIPT (static.cloudflareinsights.com) must be allowed to
     // load, AND the beacon must be allowed to POST its data back (connect-src -> cloudflareinsights.com).
     // Both are required — with only the script entry the beacon loads but silently can't report.
-    scriptSrc: ["'self'", 'https://static.cloudflareinsights.com'],
+    // 'wasm-unsafe-eval' lets the vendored pdf.js compile its image codecs (JPEG 2000, JBIG2,
+    // ICC) for the in-browser PDF → pages import. It permits WebAssembly compilation ONLY; it is
+    // not 'unsafe-eval' and does not admit eval()/new Function(). The worker and the .wasm files
+    // are same-origin under /vendor/pdfjs/, so 'self' already covers loading them.
+    scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'https://static.cloudflareinsights.com'],
     scriptSrcAttr: ["'unsafe-inline'"],
     styleSrc: ["'self'", "'unsafe-inline'"],
     styleSrcAttr: ["'unsafe-inline'"],
