@@ -51,7 +51,7 @@ export default {
   'data_sources.subtitle': 'Binden Sie externe Kalender (.ics/Webcal) und APIs an. Nutzen Sie {{ds:slug.feld}} dynamisch in Folien und Widgets.',
   'data_sources.add_new': 'Neue Datenquelle',
   'data_sources.empty_title': 'Keine Datenquellen verbunden',
-  'data_sources.empty_desc': 'Verbinden Sie einen iCal/Webcal-Kalenderlink aus Google Kalender, Outlook, Apple Kalender oder Ihrem Abfallentsorger, um Raumbelegungen, Tagesagenden und Termine live anzuzeigen.',
+  'data_sources.empty_desc': 'Verbinden Sie einen iCal/Webcal-Kalenderlink aus Google Kalender, Outlook, Apple Kalender oder einem beliebigen öffentlichen iCal-Feed, um Raumbelegungen, Tagesagenden und Termine live anzuzeigen.',
   'data_sources.add_first': 'Erste Datenquelle anbinden',
   'data_sources.view_variables': 'Template-Variablen anzeigen',
   'data_sources.sync_now': 'Jetzt synchronisieren',
