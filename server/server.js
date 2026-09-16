@@ -442,6 +442,10 @@ app.get('/player/schedule-eval.js', (req, res) => {
   res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'lib', 'schedule-eval.js'));
 });
+app.get('/player/play-order.js', (req, res) => {
+  res.type('application/javascript').setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'lib', 'play-order.js'));
+});
 
 // #299: the offline proof-of-play queue, served to the web player from the same single source the
 // Tizen .wgt copies and the Node tests require — so the wire shape cannot drift between them.

@@ -55,6 +55,7 @@ function validateScheduleBlocks(blocks) {
 }
 
 let currentPlaylistId = null;
+let currentPlaybackOrder = 'sequential';
 // #319: the items exactly as last rendered. Sorting needs the list the operator is looking at, and
 // every path that changes it already funnels through renderItems, so that is where it is kept.
 let currentPlaylistItems = [];
@@ -435,6 +436,7 @@ function layoutMockup(playlist) {
 function renderDetailContent(container, playlist) {
   const isDraft = playlist.status === 'draft';
   const hasPublished = !!playlist.published_snapshot;
+  currentPlaybackOrder = playlist.playback_order || 'sequential';
 
   container.innerHTML = `
     ${isDraft ? `
@@ -490,6 +492,13 @@ function renderDetailContent(container, playlist) {
         <option value="duration_desc">${t('playlist.sort.duration_desc')}</option>
       </select>
       <button class="btn btn-secondary btn-sm" id="playlistSortApply">${t('playlist.sort_apply')}</button>
+      <span style="width:12px"></span>
+      <span style="font-size:13px;color:var(--text-muted)">${t('playlist.order_label')}</span>
+      <select id="playlistOrder" class="input" style="width:auto;background:var(--bg-input)">
+        <option value="sequential" ${playlist.playback_order === 'sequential' || !playlist.playback_order ? 'selected' : ''}>${t('playlist.order.sequential')}</option>
+        <option value="shuffle" ${playlist.playback_order === 'shuffle' ? 'selected' : ''}>${t('playlist.order.shuffle')}</option>
+        <option value="weighted" ${playlist.playback_order === 'weighted' ? 'selected' : ''}>${t('playlist.order.weighted')}</option>
+      </select>
     </div>
     <div id="playlistSelectBar" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius)">
     </div>
@@ -590,6 +599,23 @@ function renderDetailContent(container, playlist) {
     }
   });
 
+  document.getElementById('playlistOrder')?.addEventListener('change', async (e) => {
+    const order = e.target.value;
+    if (!order || order === (playlist.playback_order || 'sequential')) return;
+    try {
+      e.target.disabled = true;
+      await api.updatePlaylist(playlist.id, { playback_order: order });
+      currentPlaybackOrder = order;
+      showToast(t('playlist.bulk.updated').replace('{n}', '1'));
+      refreshAfterMutation();
+    } catch (err) {
+      showToast(err.message, 'error');
+      e.target.value = playlist.playback_order || 'sequential';
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+
   /*
    * The checklist follows the user into the playlist they just made.
    *
@@ -645,6 +671,7 @@ function clipPayload(items) {
     log_play: it.log_play === 0 ? 0 : 1,
     fit_mode: it.fit_mode || null,
     play_when: it.play_when || null,
+    weight: it.weight || 1,
     schedules: it.schedules || [],
   }));
 }
@@ -673,13 +700,14 @@ function fieldPathsOf(data) {
   return out.slice(0, 100);
 }
 
-// The data-source condition editor: real dropdowns instead of four prompts, validated before send.
+// The condition editor: data-source, tag, or metadata. Real dropdowns, validated before send.
 async function editConditionModal(ids, parsed) {
   let sources = [];
   try { sources = await api.getDataSources(); } catch { sources = []; }
   const OPS = [['eq', '= equals'], ['neq', '≠ not equal'], ['gt', '> greater than'],
     ['gte', '≥ at least'], ['lt', '< less than'], ['lte', '≤ at most'], ['truthy', 'is set / true']];
-  const curOp = (parsed && parsed.op) || 'eq';
+  const curType = (parsed && parsed.type) || (parsed && parsed.slug ? 'ds' : 'ds');
+  const curOp = (parsed && parsed.op) || (curType === 'tag' ? 'has' : 'eq');
   const opts = sources.map((s) => `<option value="${esc(s.slug)}" ${parsed && parsed.slug === s.slug ? 'selected' : ''}>${esc(s.name || s.slug)}</option>`).join('');
   const opOpts = OPS.map(([v, l]) => `<option value="${v}" ${curOp === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
 
@@ -689,17 +717,44 @@ async function editConditionModal(ids, parsed) {
     <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:440px;max-width:92vw">
       <h3 style="margin-bottom:6px;color:var(--text-primary)">${esc(t('playlist.bulk.condition'))}</h3>
       <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">${esc(t('playlist.condition.hint'))}</p>
-      ${sources.length ? '' : `<p style="color:#fbbf24;font-size:13px;margin-bottom:12px">${esc(t('playlist.condition.no_sources'))}</p>`}
-      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.slug'))}</label>
-      <select id="condSlug" class="input" style="width:100%;margin:4px 0 12px">${opts}</select>
-      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.path'))}</label>
-      <input id="condPath" class="input" list="condFields" placeholder="e.g. status or now.title" value="${esc(parsed && parsed.path || '')}" style="width:100%;margin:4px 0 12px">
-      <datalist id="condFields"></datalist>
-      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
-      <select id="condOp" class="input" style="width:100%;margin:4px 0 12px">${opOpts}</select>
-      <div id="condValueWrap">
-        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.value'))}</label>
-        <input id="condValue" class="input" value="${esc(parsed && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.type'))}</label>
+      <select id="condType" class="input" style="width:100%;margin:4px 0 12px">
+        <option value="ds" ${curType === 'ds' || !parsed ? 'selected' : ''}>${esc(t('playlist.condition.type_ds'))}</option>
+        <option value="tag" ${curType === 'tag' ? 'selected' : ''}>${esc(t('playlist.condition.type_tag'))}</option>
+        <option value="meta" ${curType === 'meta' ? 'selected' : ''}>${esc(t('playlist.condition.type_meta'))}</option>
+      </select>
+      <div id="condDsWrap">
+        ${sources.length ? '' : `<p style="color:#fbbf24;font-size:13px;margin-bottom:12px">${esc(t('playlist.condition.no_sources'))}</p>`}
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.slug'))}</label>
+        <select id="condSlug" class="input" style="width:100%;margin:4px 0 12px">${opts}</select>
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.path'))}</label>
+        <input id="condPath" class="input" list="condFields" placeholder="e.g. status or now.title" value="${esc(parsed && parsed.type !== 'tag' && parsed.type !== 'meta' ? (parsed.path || '') : '')}" style="width:100%;margin:4px 0 12px">
+        <datalist id="condFields"></datalist>
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
+        <select id="condOp" class="input" style="width:100%;margin:4px 0 12px">${opOpts}</select>
+        <div id="condValueWrap">
+          <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.value'))}</label>
+          <input id="condValue" class="input" value="${esc(parsed && parsed.type !== 'tag' && parsed.type !== 'meta' && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
+        </div>
+      </div>
+      <div id="condTagWrap" hidden>
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
+        <select id="condTagOp" class="input" style="width:100%;margin:4px 0 12px">
+          <option value="has" ${curOp !== 'lacks' ? 'selected' : ''}>${esc(t('playlist.condition.tag_has'))}</option>
+          <option value="lacks" ${curOp === 'lacks' ? 'selected' : ''}>${esc(t('playlist.condition.tag_lacks'))}</option>
+        </select>
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.tag'))}</label>
+        <input id="condTagValue" class="input" value="${esc(parsed && parsed.type === 'tag' && parsed.value ? String(parsed.value) : '')}" placeholder="${esc(t('content.tags_placeholder'))}" style="width:100%;margin:4px 0 12px">
+      </div>
+      <div id="condMetaWrap" hidden>
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.path'))}</label>
+        <input id="condMetaPath" class="input" value="${esc(parsed && parsed.type === 'meta' ? (parsed.path || '') : '')}" placeholder="e.g. dept" style="width:100%;margin:4px 0 12px">
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
+        <select id="condMetaOp" class="input" style="width:100%;margin:4px 0 12px">${OPS.map(([v, l]) => `<option value="${v}" ${parsed && parsed.type === 'meta' && curOp === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <div id="condMetaValueWrap">
+          <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.value'))}</label>
+          <input id="condMetaValue" class="input" value="${esc(parsed && parsed.type === 'meta' && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
+        </div>
       </div>
       <div style="display:flex;gap:8px;justify-content:space-between;margin-top:8px">
         <button class="btn btn-secondary" id="condClear">${esc(t('playlist.condition.clear'))}</button>
@@ -710,6 +765,19 @@ async function editConditionModal(ids, parsed) {
       </div>
     </div>`;
   document.body.appendChild(modal);
+
+  const typeSel = modal.querySelector('#condType');
+  const dsWrap = modal.querySelector('#condDsWrap');
+  const tagWrap = modal.querySelector('#condTagWrap');
+  const metaWrap = modal.querySelector('#condMetaWrap');
+  const showType = () => {
+    const ty = typeSel.value;
+    dsWrap.hidden = ty !== 'ds';
+    tagWrap.hidden = ty !== 'tag';
+    metaWrap.hidden = ty !== 'meta';
+  };
+  typeSel.addEventListener('change', showType);
+  showType();
 
   const slugSel = modal.querySelector('#condSlug');
   const fieldList = modal.querySelector('#condFields');
@@ -724,6 +792,10 @@ async function editConditionModal(ids, parsed) {
   slugSel.addEventListener('change', refreshFields);
   opSel.addEventListener('change', refreshValue);
   refreshFields(); refreshValue();
+  const metaOp = modal.querySelector('#condMetaOp');
+  const metaValWrap = modal.querySelector('#condMetaValueWrap');
+  metaOp.addEventListener('change', () => { metaValWrap.hidden = metaOp.value === 'truthy'; });
+  metaValWrap.hidden = metaOp.value === 'truthy';
 
   const close = () => modal.remove();
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
@@ -733,14 +805,28 @@ async function editConditionModal(ids, parsed) {
     selectedItemIds.clear(); paintSelectBar(); showToast(t('playlist.bulk.updated').replace('{n}', ids.length));
   });
   modal.querySelector('#condApply').addEventListener('click', async () => {
-    const slug = slugSel.value;
-    const path = modal.querySelector('#condPath').value.trim();
-    const op = opSel.value;
-    const value = op === 'truthy' ? '' : modal.querySelector('#condValue').value;
-    if (!slug) { showToast(t('playlist.condition.no_sources'), 'error'); return; }
-    if (!path) { modal.querySelector('#condPath').focus(); return; }
+    const ty = typeSel.value;
+    let play_when;
+    if (ty === 'tag') {
+      const value = modal.querySelector('#condTagValue').value.trim().toLowerCase();
+      if (!value) { modal.querySelector('#condTagValue').focus(); return; }
+      play_when = { type: 'tag', op: modal.querySelector('#condTagOp').value, value };
+    } else if (ty === 'meta') {
+      const path = modal.querySelector('#condMetaPath').value.trim();
+      const op = metaOp.value;
+      if (!path) { modal.querySelector('#condMetaPath').focus(); return; }
+      play_when = { type: 'meta', path, op, value: op === 'truthy' ? '' : modal.querySelector('#condMetaValue').value };
+    } else {
+      const slug = slugSel.value;
+      const path = modal.querySelector('#condPath').value.trim();
+      const op = opSel.value;
+      const value = op === 'truthy' ? '' : modal.querySelector('#condValue').value;
+      if (!slug) { showToast(t('playlist.condition.no_sources'), 'error'); return; }
+      if (!path) { modal.querySelector('#condPath').focus(); return; }
+      play_when = { slug, path, op, value };
+    }
     close();
-    const r = await runSelection({ action: 'play_when', ids, play_when: { slug, path, op, value } });
+    const r = await runSelection({ action: 'play_when', ids, play_when });
     if (r) { showToast(t('playlist.bulk.updated').replace('{n}', ids.length)); }
   });
 }
@@ -761,6 +847,7 @@ function paintSelectBar() {
     <button class="btn btn-secondary btn-sm" data-sel="paste" ${clip && clip.length ? '' : 'disabled'}>${t('playlist.bulk.paste')}</button>
     <button class="btn btn-secondary btn-sm" data-sel="duplicate" ${n ? '' : 'disabled'}>${t('playlist.bulk.duplicate')}</button>
     <button class="btn btn-secondary btn-sm" data-sel="duration" ${n ? '' : 'disabled'}>${t('playlist.bulk.duration')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="weight" ${n ? '' : 'disabled'}>${t('playlist.bulk.weight')}</button>
     <button class="btn btn-secondary btn-sm" data-sel="window" ${n ? '' : 'disabled'}>${t('playlist.bulk.window')}</button>
     <button class="btn btn-secondary btn-sm" data-sel="validity" ${n ? '' : 'disabled'}>${t('playlist.bulk.validity')}</button>
     <button class="btn btn-secondary btn-sm" data-sel="activate" ${n ? '' : 'disabled'}>${t('playlist.bulk.activate')}</button>
@@ -917,6 +1004,15 @@ async function handleSelection(act) {
     if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
     return;
   }
+  if (act === 'weight') {
+    const raw = prompt(t('playlist.bulk.weight'), (rows[0] && rows[0].weight) || 1);
+    if (raw == null) return;
+    const w = parseInt(raw, 10);
+    if (!w || w < 1) return;
+    const r = await runSelection({ action: 'weight', ids, weight: w });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
+    return;
+  }
   if (act === 'window') {
     const from = prompt(t('playlist.play_from'), (rows[0] && rows[0].play_from) || '');
     if (from == null) return;
@@ -958,7 +1054,7 @@ function renderItems(items) {
   const present = new Set(currentPlaylistItems.map((it) => String(it.id)));
   selectedItemIds = new Set([...selectedItemIds].filter((id) => present.has(id)));
   const sortBar = document.getElementById('playlistSortBar');
-  if (sortBar) sortBar.style.display = items.length > 1 ? 'flex' : 'none';
+  if (sortBar) sortBar.style.display = items.length ? 'flex' : 'none';
   paintSelectBar();
 
   if (!items.length) {
@@ -989,6 +1085,7 @@ function renderItems(items) {
           <span style="white-space:nowrap">${item.child_playlist_id ? t('playlist.item_nested') : item.widget_id ? t('playlist.item_widget') : esc(item.mime_type || t('playlist.unknown_type'))}</span>
           ${item.play_from || item.play_until ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#1a2e1a;color:#86efac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(windowSummary(item))}">${esc(windowSummary(item))}</span>` : ''}
           ${item.schedules && item.schedules.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#0c2a3f;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(scheduleSummary(item.schedules))}">🕐 ${esc(scheduleSummary(item.schedules))}</span>` : ''}
+          ${Array.isArray(item.tags) && item.tags.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.tags.map((tg) => '#' + esc(tg)).join(' ')}</span>` : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -997,6 +1094,8 @@ function renderItems(items) {
           : `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.duration')}</label>
         <input type="number" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`}
+        ${currentPlaybackOrder === 'weighted' && !item.child_playlist_id ? `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.weight')}</label>
+        <input type="number" class="input item-weight" data-item-id="${item.id}" value="${item.weight || 1}" min="1" max="1000" style="width:56px;padding:4px 8px;font-size:13px;text-align:center">` : ''}
         <label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.play_window_hint'))}">${t('playlist.play_from')}</label>
         <input type="datetime-local" class="input item-play-from" data-item-id="${item.id}" value="${esc(item.play_from || '')}" style="width:168px;padding:4px 6px;font-size:12px">
         <label style="font-size:12px;color:var(--text-muted)">${t('playlist.play_until')}</label>
@@ -1034,6 +1133,20 @@ function renderItems(items) {
       if (!val || val < 1) { e.target.value = 10; return; }
       try {
         await api.updatePlaylistItem(currentPlaylistId, itemId, { duration_sec: val });
+        refreshAfterMutation();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+
+  itemsEl.querySelectorAll('.item-weight').forEach(input => {
+    input.addEventListener('change', async (e) => {
+      const itemId = e.target.dataset.itemId;
+      const val = parseInt(e.target.value, 10);
+      if (!val || val < 1) { e.target.value = 1; return; }
+      try {
+        await api.updatePlaylistItem(currentPlaylistId, itemId, { weight: val });
         refreshAfterMutation();
       } catch (err) {
         showToast(err.message, 'error');

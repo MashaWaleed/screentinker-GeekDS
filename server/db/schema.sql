@@ -111,6 +111,10 @@ CREATE TABLE IF NOT EXISTS content (
     width           INTEGER,
     height          INTEGER,
     remote_url      TEXT,
+    -- Tags: JSON string array. Meta: JSON object. Copied onto the published snapshot
+    -- so a screen can skip on them with the WAN down.
+    tags            TEXT,
+    meta            TEXT,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     -- Bumped whenever the BYTES change (PUT /:id/replace). Players cache media by id, and an id
     -- whose bytes changed underneath them is the one way a cached asset can be stale forever: the
@@ -401,6 +405,10 @@ CREATE TABLE IF NOT EXISTS playlists (
     is_auto_generated INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'draft',
     published_snapshot TEXT,
+    -- sequential (default) | shuffle | weighted. Draft vs published so a mode
+    -- change does not hit devices until publish.
+    playback_order  TEXT NOT NULL DEFAULT 'sequential',
+    published_playback_order TEXT,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -426,6 +434,8 @@ CREATE TABLE IF NOT EXISTS playlist_items (
     fit_mode        TEXT,
     -- JSON { slug, path, op, value } — skip unless the named data source matches. Fail open.
     play_when       TEXT,
+    -- Used only when the playlist's playback_order is 'weighted'. Default 1.
+    weight          INTEGER NOT NULL DEFAULT 1,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );

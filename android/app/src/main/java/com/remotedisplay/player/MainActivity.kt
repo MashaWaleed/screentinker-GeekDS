@@ -440,7 +440,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     // #74/#75: restore the cached effective timezone too (offline schedules)
                     playlistController.setTimezone(if (cached.isNull("timezone")) null else cached.optString("timezone", "").ifEmpty { null })
-                    playlistController.updatePlaylist(assignments)
+                    playlistController.updatePlaylist(assignments, cached.optString("playback_order", "sequential"))
                     playlistController.startIfNeeded()
                     // #group-sync: if this device was in a sync group, resume the schedule immediately
                     // from the cached clock offset — a reboot mid-outage comes back aligned, no server.
@@ -835,7 +835,7 @@ class MainActivity : AppCompatActivity() {
                 if (zoneManager?.hasZones() == true) zoneManager?.cleanup()
                 groupSchedule.exit()                 // wall and group are mutually exclusive
                 wallController.apply(parseWallConfig(wallObj))
-                playlistController.updatePlaylist(assignments)
+                playlistController.updatePlaylist(assignments, data.optString("playback_order", "sequential"))
             } else {
             // #group-sync: not a wall — enter clock/schedule group sync if the payload carries a
             // group_sync block, else leave it. No leader/relay: the schedule tick drives index +
@@ -913,7 +913,7 @@ class MainActivity : AppCompatActivity() {
                 // Single-zone mode - use PlaylistController (existing behavior)
                 com.remotedisplay.player.util.DebugLog.i("Player", "Layout: SINGLE/FULLSCREEN (${layoutZones?.length() ?: 0} zones), ${assignments.length()} assignments")
                 if (zoneManager?.hasZones() == true) handler.post { zoneManager?.cleanup() }
-                playlistController.updatePlaylist(assignments)
+                playlistController.updatePlaylist(assignments, data.optString("playback_order", "sequential"))
             }
             } // end else (not a video wall)
 

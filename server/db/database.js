@@ -1779,6 +1779,11 @@ const migrations = [
      approved_at    INTEGER NOT NULL,
      note           TEXT
    )`,
+  "ALTER TABLE content ADD COLUMN tags TEXT",
+  "ALTER TABLE content ADD COLUMN meta TEXT",
+  "ALTER TABLE playlists ADD COLUMN playback_order TEXT NOT NULL DEFAULT 'sequential'",
+  "ALTER TABLE playlists ADD COLUMN published_playback_order TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN weight INTEGER NOT NULL DEFAULT 1",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

@@ -287,6 +287,7 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
+  <script src="/player/play-order.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
   <script src="/player/live-publish.js"></script>
@@ -4494,6 +4495,12 @@
       }
 
       const newItems = data.assignments || [];
+      if (data.playback_order && data.playback_order !== playbackOrder) {
+        playOrderState = {};
+        clearLookahead();
+        for (const k of Object.keys(zoneOrderState)) delete zoneOrderState[k];
+      }
+      if (data.playback_order) playbackOrder = data.playback_order;
       // Build fingerprint from id + url + filename to detect any content change.
       // #74/#75: include schedules so a schedule edit (same content) is detected too.
       // transition-engine: include the per-item transition too, or a transition config change (effects,
@@ -4510,7 +4517,7 @@
       // widget_rev is in here for the same reason as schedules and transition: a widget's IDENTITY
       // does not change when it is EDITED, so a content edit produced an identical fingerprint, the
       // update was treated as "unchanged", and the screen kept the old render until a reload.
-      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.transition || null)}`).join(',');
+      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.tags || [])}|${JSON.stringify(a.meta || {})}|${JSON.stringify(a.transition || null)}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 
@@ -4886,7 +4893,15 @@
       return (m === 'cover' || m === 'fill' || m === 'contain') ? m : 'contain';
     }
     function shouldLogPlay(item) { return !item || item.log_play !== 0; }
+    let playbackOrder = 'sequential';
+    let playOrderState = {};
+    const zoneOrderState = {};
     function nextActiveIndex(from) {
+      try {
+        if (window.PlayOrder && !(wallConfig && wallConfig.is_leader === false) && !groupSync) {
+          return PlayOrder.nextIndex(playlist, from, function (it) { return scheduleAllows(it); }, playbackOrder, playOrderState);
+        }
+      } catch (e) {}
       if (!playlist.length) return -1;
       for (let i = 1; i <= playlist.length; i++) {
         const idx = (from + i) % playlist.length;
@@ -4894,6 +4909,32 @@
       }
       return -1;
     }
+    // Peek without consuming the shuffle bag (preload / "is this the only item" probes).
+    function peekNextIndex(from) {
+      const saved = playOrderState;
+      playOrderState = { bag: (saved.bag || []).slice(), bagKey: saved.bagKey };
+      try { return nextActiveIndex(from); }
+      finally { playOrderState = saved; }
+    }
+    // Committed lookahead: the index the NEXT advance will actually use. A plain
+    // peek re-draws for weighted mode (stateless) and at a shuffle bag boundary
+    // (empty bag rebuilt with fresh Math.random), so preloading off a peek warms
+    // the WRONG image. commitNextIndex draws ONCE, caches it, and nextItem replays
+    // the cached draw — so the warmed frame is the one that plays. Revalidated
+    // against schedule/bounds so a daypart flip or list change forces a re-draw.
+    let lookaheadFrom = null;
+    let lookaheadIdx = -1;
+    function commitNextIndex(from) {
+      if (lookaheadFrom === from && lookaheadIdx >= 0 && lookaheadIdx < playlist.length
+          && scheduleAllows(playlist[lookaheadIdx])) {
+        return lookaheadIdx;
+      }
+      const idx = nextActiveIndex(from); // consumes the shuffle bag / draws weighted
+      lookaheadFrom = from;
+      lookaheadIdx = idx;
+      return idx;
+    }
+    function clearLookahead() { lookaheadFrom = null; lookaheadIdx = -1; }
     // Every item filtered out: show the idle screen and re-check shortly (a daypart
     // may begin). Re-evaluated at item boundaries otherwise, per the locked design.
     function showNothingScheduled() {
@@ -5031,8 +5072,10 @@
       }
 
       // #74/#75: advance to the next item whose schedule allows it now (skip
-      // filtered items); idle if none are active.
-      const idx = nextActiveIndex(currentIndex);
+      // filtered items); idle if none are active. Reuse the draw preload already
+      // committed for this position so shuffle/weighted play the warmed frame.
+      const idx = commitNextIndex(currentIndex);
+      clearLookahead();
       if (idx === -1) { showNothingScheduled(); return; }
       currentIndex = idx;
       playCurrentItem();
@@ -5428,7 +5471,7 @@
     // closed or a sibling opened, hand off to nextItem (idle or a genuine buffered transition —
     // schedule-awareness / Fix A preserved).
     function reevaluateHeldWidget() {
-      if (nextActiveIndex(currentIndex) === currentIndex) {
+      if (peekNextIndex(currentIndex) === currentIndex) {
         scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
         return;
       }
@@ -5472,7 +5515,9 @@
       while (keys.length > 4) delete imgPreloadCache[keys.shift()];
     }
     function preloadNextImage() {
-      const nextIdx = nextActiveIndex(currentIndex);
+      // Commit the draw here (not a peek) so the actual advance replays the same
+      // index — otherwise weighted/shuffle-boundary redraws warm the wrong image.
+      const nextIdx = commitNextIndex(currentIndex);
       if (nextIdx < 0 || nextIdx === currentIndex) return;
       const it = playlist[nextIdx];
       if (!it || typeof it.mime_type !== 'string' || !it.mime_type.startsWith('image/')) return;
@@ -5907,7 +5952,7 @@
           // selection changed (daypart opened/closed). A rotating playlist advances normally on
           // its duration; the first mount + every genuine transition still go through the
           // buffered swap.
-          const held = nextActiveIndex(currentIndex) === currentIndex;
+          const held = peekNextIndex(currentIndex) === currentIndex;
           if (held) scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
           else scheduleAdvance(nextItem, (item.duration_sec || 30) * 1000);
         }
@@ -6092,7 +6137,13 @@
     }
 
     // #74/#75 zone-level schedule helpers.
-    function zoneNextActive(items, from) {
+    function zoneNextActive(items, from, zoneId) {
+      try {
+        if (window.PlayOrder) {
+          if (!zoneOrderState[zoneId]) zoneOrderState[zoneId] = {};
+          return PlayOrder.nextIndex(items, from - 1, function (it) { return scheduleAllows(it); }, playbackOrder, zoneOrderState[zoneId]);
+        }
+      } catch (e) {}
       for (let i = 0; i < items.length; i++) {
         const idx = (from + i) % items.length;
         if (scheduleAllows(items[idx])) return idx;
@@ -6178,7 +6229,7 @@
     function showZoneItem(zone, div, items, index, timers = zoneTimers) {
       if (timers[zone.id]) { clearTimeout(timers[zone.id]); delete timers[zone.id]; }
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
-      const activeIdx = zoneNextActive(items, index);
+      const activeIdx = zoneNextActive(items, index, zone.id);
       if (activeIdx === -1) { showZoneEmpty(zone, div, items, timers); return; }
       index = activeIdx;
       const a = items[index % items.length];

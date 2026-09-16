@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Tags and metadata on content, and shuffle / weighted-random playlists.** Tag a file in the
+library (`promo, lobby`) or attach key=value metadata. A playlist item can skip unless it has (or
+lacks) a tag, or unless a metadata field matches, using the same condition picker as the
+data-source gate, with a When dropdown. Tags and metadata are copied onto the published snapshot so
+a screen still skips with the WAN down.
+
+**Order on a playlist: in order (default), shuffle, or weighted random.** Shuffle draws from a
+no-repeat bag and refills when empty; whichever item ends a bag is held out of the next bag, so it
+waits one cycle before it can repeat. Weighted uses each item's weight (1-1000, default 1) and
+avoids playing the same item twice in a row when another eligible item exists. Draft vs published,
+same as every other playlist field: publish to push to devices. Old players ignore the extra fields
+and keep playing in order.
+
+Wall followers and group-sync members still play in order; the leader index / shared clock is the
+source of truth. Multi-zone Android and multi-zone e-ink stay sequential; web, Tizen, BrightSign /
+webOS (web player), native Android fullscreen, and single-zone e-ink shuffle. The same zoned layout
+therefore shuffles on web/webOS/BrightSign and plays in order on Android and e-ink.
+
 ## 2.1.1 (2026-09-16)
 
 ### Added

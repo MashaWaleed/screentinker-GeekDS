@@ -8,6 +8,7 @@ const config = require('../config');
 // by read/write helpers gated on the playlist's workspace_id.
 const { accessContext } = require('../lib/tenancy');
 const { resolveItemDuration } = require('../lib/item-duration');
+const { parseTags, parseMeta } = require('../lib/content-tags');
 const { emitMuteChanged } = require('../lib/mute-sync');
 
 // Per-item play window: local YYYY-MM-DDTHH:MM, inclusive. Empty/null clears.
@@ -51,17 +52,57 @@ function parsePlayWhen(v) {
   if (v === null || v === '' || v === false) return null;
   const obj = typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return false; } })() : v;
   if (!obj || typeof obj !== 'object') return false;
+  const type = obj.type || (obj.slug ? 'ds' : (obj.tag || obj.op === 'has' || obj.op === 'lacks' ? 'tag' : 'ds'));
+  if (type === 'tag') {
+    const tag = String(obj.value || obj.tag || '').trim().toLowerCase();
+    if (!tag) return false;
+    return { type: 'tag', op: obj.op === 'lacks' ? 'lacks' : 'has', value: tag };
+  }
+  if (type === 'meta') {
+    const path = typeof obj.path === 'string' ? obj.path.trim() : '';
+    const op = obj.op || 'eq';
+    if (!path) return false;
+    if (!['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'truthy', 'has'].includes(op)) return false;
+    return { type: 'meta', path, op, value: obj.value == null ? null : obj.value };
+  }
   const slug = typeof obj.slug === 'string' ? obj.slug.trim() : '';
   const path = typeof obj.path === 'string' ? obj.path.trim() : '';
   const op = obj.op || 'eq';
   if (!slug || !path) return false;
   if (!['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'truthy'].includes(op)) return false;
-  return { slug, path, op, value: obj.value == null ? null : obj.value };
+  return { type: 'ds', slug, path, op, value: obj.value == null ? null : obj.value };
+}
+function normalizePlaybackOrder(v) {
+  if (v === undefined) return undefined;
+  const s = String(v || 'sequential').toLowerCase();
+  return (s === 'shuffle' || s === 'weighted' || s === 'sequential') ? s : false;
+}
+function normalizeWeight(v) {
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1) return false;
+  return Math.min(1000, Math.floor(n));
 }
 function attachPlayWhen(it) {
   if (!it.play_when) { delete it.play_when; return; }
   const parsed = parsePlayWhen(it.play_when);
   if (parsed) it.play_when = parsed; else delete it.play_when;
+}
+function decorateEditorItems(items) {
+  const ids = [...new Set((items || []).map((it) => it.content_id).filter(Boolean))];
+  if (!ids.length) return items;
+  const ph = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT id, tags, meta FROM content WHERE id IN (${ph})`).all(...ids);
+  const map = new Map(rows.map((r) => [r.id, r]));
+  for (const it of items) {
+    const row = it.content_id && map.get(it.content_id);
+    if (!row) continue;
+    const tags = parseTags(row.tags);
+    if (tags.length) it.tags = tags;
+    const meta = parseMeta(row.meta);
+    if (meta && Object.keys(meta).length) it.meta = meta;
+  }
+  return items;
 }
 
 // Re-probe video duration with ffprobe if content.duration_sec is missing
@@ -163,10 +204,11 @@ function attachSlideAudio(it) {
 function buildSnapshotItems(playlistId) {
   const items = db.prepare(`
     SELECT pi.id AS _iid, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
-           pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when,
+           pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight,
            COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
            c.duration_sec as content_duration, c.remote_url, c.unstable_connection,
            c.captions_enabled, c.captions_lang, c.subtitle_url, c.subtitle_lang,
+           c.tags AS content_tags, c.meta AS content_meta,
            w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev
     FROM playlist_items pi
     LEFT JOIN content c ON pi.content_id = c.id
@@ -202,6 +244,13 @@ function buildSnapshotItems(playlistId) {
     if (it.log_play === 0) it.log_play = 0; else delete it.log_play;
     if (!it.fit_mode) delete it.fit_mode;
     attachPlayWhen(it);
+    const tags = parseTags(it.content_tags);
+    if (tags.length) it.tags = tags;
+    delete it.content_tags;
+    const meta = parseMeta(it.content_meta);
+    if (meta && Object.keys(meta).length) it.meta = meta;
+    delete it.content_meta;
+    if (it.weight && Number(it.weight) !== 1) it.weight = Number(it.weight); else delete it.weight;
     delete it._iid;
     attachSlideAudio(it);
   }
@@ -392,16 +441,17 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
    * which Carousel proved requires a player release (CSL-9211). Deferred, and named in the design
    * doc so it is not rediscovered.
    */
-  const prev = db.prepare('SELECT status, published_snapshot, published_structure FROM playlists WHERE id = ?').get(playlistId);
+  const prev = db.prepare('SELECT status, published_snapshot, published_structure, playback_order, published_playback_order FROM playlists WHERE id = ?').get(playlistId);
+  const order = normalizePlaybackOrder(prev && prev.playback_order) || 'sequential';
 
   // ⚠️ Structure is captured PRE-expansion so "discard" can restore the nesting the flat snapshot
   // cannot describe. Device-facing data stays in published_snapshot; this is never sent anywhere.
   const structure = JSON.stringify(db.prepare(`
-    SELECT content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when
+    SELECT content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight
       FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC
   `).all(playlistId));
 
-  if (prev && prev.status === 'published' && prev.published_snapshot === next) {
+  if (prev && prev.status === 'published' && prev.published_snapshot === next && (prev.published_playback_order || 'sequential') === order) {
     /*
      * The resolved list is unchanged, so no device is touched and nothing restarts — that is the
      * point of this early exit. But STRUCTURE can differ while the flat output does not: replacing
@@ -415,8 +465,8 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
     }
     return { changed: false, items: snapshotItems.length };
   }
-  db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, updated_at = strftime('%s','now') WHERE id = ?")
-    .run(next, structure, playlistId);
+  db.prepare("UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(next, structure, order, playlistId);
   pushToDevices(playlistId, reqOrIo);
   try {
     const row = db.prepare('SELECT name, workspace_id FROM playlists WHERE id = ?').get(playlistId);
@@ -547,7 +597,7 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
   // zoned items) means fullscreen, which the UI draws as a single frame.
   let layout = null;
   try { layout = derivePreviewLayout(items); } catch (e) { layout = null; }
-  res.json({ ...req.playlist, items, item_count: items.length, display_count: displayCount, layout });
+  res.json({ ...req.playlist, items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, layout });
 });
 
 // #104: device-free draft preview payload. Same shape the device player consumes
@@ -561,7 +611,10 @@ router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
   const assignments = buildSnapshotItems(req.params.id);
   const layout = derivePreviewLayout(assignments);
   const orientation = PREVIEW_ORIENTATIONS.has(req.query.orientation) ? req.query.orientation : 'landscape';
-  res.json(assemblePayload({ assignments, layout, orientation, wall_config: null, timezone: null }));
+  res.json(assemblePayload({
+    assignments, layout, orientation, wall_config: null, timezone: null,
+    playback_order: req.playlist.playback_order || 'sequential',
+  }));
 });
 
 // Update playlist
@@ -578,11 +631,19 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
     updates.push('description = ?');
     values.push(description.trim());
   }
+  if (req.body.playback_order !== undefined) {
+    const order = normalizePlaybackOrder(req.body.playback_order);
+    if (order === false) return res.status(400).json({ error: 'playback_order must be sequential, shuffle, or weighted' });
+    updates.push('playback_order = ?');
+    values.push(order);
+  }
   if (updates.length > 0) {
     updates.push("updated_at = strftime('%s','now')");
     values.push(req.params.id);
     db.prepare(`UPDATE playlists SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    require('../lib/revisions').recordCurrent(db, 'playlist', req.params.id, { actor: require('../lib/releases').actorOf(req), summary: 'Renamed' });
+    const summary = req.body.playback_order !== undefined ? 'Changed playback order' : 'Renamed';
+    require('../lib/revisions').recordCurrent(db, 'playlist', req.params.id, { actor: require('../lib/releases').actorOf(req), summary });
+    if (req.body.playback_order !== undefined) markDraft(req.params.id, req, 'Changed playback order');
   }
   res.json(db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id));
 });
@@ -624,7 +685,7 @@ router.post('/:id/publish', requirePlaylistWrite, (req, res) => {
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
   `).all(req.params.id);
-  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items });
+  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items: decorateEditorItems(items) });
 });
 
 // Discard draft — revert playlist_items to match published_snapshot
@@ -664,13 +725,13 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
     // Re-insert from snapshot, skipping items whose content/widget was deleted
     // muted rides along too: #129's per-item mute was dropped by the old restore, so discarding an
     // unrelated draft edit silently un-muted every item that had been muted before publish.
-    const insert = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const insert = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const item of publishedItems) {
       try {
         insert.run(req.params.id, item.content_id || null, item.widget_id || null,
                    item.child_playlist_id || null, item.zone_id || null, item.sort_order, item.duration_sec,
                    item.muted ? 1 : 0, item.play_from || null, item.play_until || null,
-                   item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when ? (typeof item.play_when === 'string' ? item.play_when : JSON.stringify(item.play_when)) : null);
+                   item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when ? (typeof item.play_when === 'string' ? item.play_when : JSON.stringify(item.play_when)) : null, item.weight || 1);
       } catch (e) {
         if (e.message.includes('FOREIGN KEY')) {
           console.warn(`Discard: skipping snapshot item (content_id=${item.content_id}, widget_id=${item.widget_id}) — referenced entity was deleted`);
@@ -679,7 +740,7 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
         throw e;
       }
     }
-    db.prepare("UPDATE playlists SET status = 'published', updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
+    db.prepare("UPDATE playlists SET status = 'published', playback_order = COALESCE(published_playback_order, playback_order, 'sequential'), updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
   });
   transaction();
   require('../lib/revisions').recordCurrent(db, 'playlist', req.params.id, { actor: require('../lib/releases').actorOf(req), summary: 'Draft discarded' });
@@ -697,7 +758,7 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
   `).all(req.params.id);
-  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items });
+  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items: decorateEditorItems(items) });
 });
 
 // Delete playlist
@@ -1038,8 +1099,13 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
   }
   if (Object.prototype.hasOwnProperty.call(req.body, 'play_when')) {
     const when = parsePlayWhen(req.body.play_when);
-    if (when === false) return res.status(400).json({ error: 'play_when must be { slug, path, op, value } or empty' });
+    if (when === false) return res.status(400).json({ error: 'play_when must be { slug, path, op, value }, { type:tag }, { type:meta }, or empty' });
     updates.push('play_when = ?'); values.push(when ? JSON.stringify(when) : null);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'weight')) {
+    const w = normalizeWeight(req.body.weight);
+    if (w === false) return res.status(400).json({ error: 'weight must be an integer from 1 to 1000' });
+    updates.push('weight = ?'); values.push(w);
   }
   /*
    * ⚠️ #129's per-item mute, which this route never read.
@@ -1145,9 +1211,9 @@ router.post('/:id/items/:itemId/duplicate', requirePlaylistWrite, (req, res) => 
     // content_id, widget_id AND child_playlist_id all NULL — a ghost that renders as nothing. No
     // depth check is needed here, because the copy lands in the playlist that already holds it.
     const result = db.prepare(`
-      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.params.id, item.content_id, item.widget_id, item.child_playlist_id, item.zone_id, order, item.duration_sec, item.play_from || null, item.play_until || null, item.muted ? 1 : 0, item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when || null);
+      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.params.id, item.content_id, item.widget_id, item.child_playlist_id, item.zone_id, order, item.duration_sec, item.play_from || null, item.play_until || null, item.muted ? 1 : 0, item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when || null, item.weight || 1);
     const newId = result.lastInsertRowid;
     const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?').all(req.params.itemId);
     const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
@@ -1181,7 +1247,7 @@ router.post('/:id/items/:itemId/duplicate', requirePlaylistWrite, (req, res) => 
 const MAX_SELECTION = 500;
 const SELECTION_ACTIONS = new Set([
   'delete', 'duplicate', 'duration', 'play_window', 'enabled', 'log_play',
-  'fit_mode', 'mute', 'schedules', 'play_when', 'transition', 'paste',
+  'fit_mode', 'mute', 'schedules', 'play_when', 'transition', 'paste', 'weight',
 ]);
 
 function loadSelectionItems(playlistId, ids) {
@@ -1213,8 +1279,8 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
       const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
       let order = (max && max.m) || 0;
       const ins = db.prepare(`INSERT INTO playlist_items
-        (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
       // A pasted zone_id from another playlist may not exist in this workspace's layouts. Keep it
       // only if it resolves here; otherwise drop to the default zone so the item still renders
@@ -1253,7 +1319,7 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
           const r = ins.run(req.params.id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null,
             resolveZone(it.zone_id), ++order, it.duration_sec || 10, it.muted ? 1 : 0,
             it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1,
-            fit, when ? JSON.stringify(when) : null);
+            fit, when ? JSON.stringify(when) : null, it.weight || 1);
           added.push(r.lastInsertRowid);
           const blocks = Array.isArray(it.schedules) ? it.schedules : [];
           blocks.forEach((b, i) => {
@@ -1283,10 +1349,10 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
         const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
         const order = ((max && max.m) || 0) + 1;
         const result = db.prepare(`INSERT INTO playlist_items
-          (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
           req.params.id, r.content_id, r.widget_id, r.child_playlist_id, r.zone_id, order, r.duration_sec,
-          r.play_from, r.play_until, r.muted ? 1 : 0, r.enabled === 0 ? 0 : 1, r.log_play === 0 ? 0 : 1, r.fit_mode, r.play_when);
+          r.play_from, r.play_until, r.muted ? 1 : 0, r.enabled === 0 ? 0 : 1, r.log_play === 0 ? 0 : 1, r.fit_mode, r.play_when, r.weight || 1);
         const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?').all(r.id);
         const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
         for (const s of scheds) insSched.run(uuidv4(), result.lastInsertRowid, s.active_days, s.start_time, s.end_time, s.start_date, s.end_date, s.sort_order);
@@ -1366,11 +1432,20 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
 
     if (action === 'play_when') {
       const when = parsePlayWhen(req.body.play_when);
-      if (when === false) return res.status(400).json({ error: 'play_when must be { slug, path, op, value } or empty' });
+      if (when === false) return res.status(400).json({ error: 'play_when must be a data-source, tag, or meta condition, or empty' });
       const up = db.prepare("UPDATE playlist_items SET play_when = ?, updated_at = strftime('%s','now') WHERE id = ?");
       const json = when ? JSON.stringify(when) : null;
       db.transaction(() => { for (const r of rows) up.run(json, r.id); })();
       markDraft(req.params.id, req, `Set condition on ${rows.length} item(s)`);
+      return res.json({ updated: rows.length });
+    }
+
+    if (action === 'weight') {
+      const w = normalizeWeight(req.body.weight);
+      if (w === false) return res.status(400).json({ error: 'weight must be an integer from 1 to 1000' });
+      const up = db.prepare("UPDATE playlist_items SET weight = ?, updated_at = strftime('%s','now') WHERE id = ?");
+      db.transaction(() => { for (const r of rows) up.run(w, r.id); })();
+      markDraft(req.params.id, req, `Set weight on ${rows.length} item(s)`);
       return res.json({ updated: rows.length });
     }
 

@@ -287,6 +287,7 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/player/schedule-eval.js"></script>
+  <script src="/player/play-order.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
   <script src="/player/live-publish-legacy.js"></script>
@@ -3612,7 +3613,13 @@ function handlePlaylistUpdate(data) {
     return;
   }
   const newItems = data.assignments || [];
-  const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|").concat(a.widget_rev || "", "|").concat(a.zone_id || "", "|").concat(a.remote_url || "", "|").concat(a.filepath || "", "|").concat(a.filename || "", "|").concat(JSON.stringify(a.schedules || []), "|").concat(a.play_from || "", "|").concat(a.play_until || "", "|").concat(a.enabled === 0 ? 0 : 1, "|").concat(a.log_play === 0 ? 0 : 1, "|").concat(a.fit_mode || "", "|").concat(JSON.stringify(a.play_when || null), "|").concat(JSON.stringify(a.transition || null))).join(",");
+  if (data.playback_order && data.playback_order !== playbackOrder) {
+    playOrderState = {};
+    clearLookahead();
+    for (const k of Object.keys(zoneOrderState)) delete zoneOrderState[k];
+  }
+  if (data.playback_order) playbackOrder = data.playback_order;
+  const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|").concat(a.widget_rev || "", "|").concat(a.zone_id || "", "|").concat(a.remote_url || "", "|").concat(a.filepath || "", "|").concat(a.filename || "", "|").concat(JSON.stringify(a.schedules || []), "|").concat(a.play_from || "", "|").concat(a.play_until || "", "|").concat(a.enabled === 0 ? 0 : 1, "|").concat(a.log_play === 0 ? 0 : 1, "|").concat(a.fit_mode || "", "|").concat(JSON.stringify(a.play_when || null), "|").concat(JSON.stringify(a.tags || []), "|").concat(JSON.stringify(a.meta || {}), "|").concat(JSON.stringify(a.transition || null))).join(",");
   const newFp = fingerprint(newItems);
   const oldFp = fingerprint(playlist);
   const effectiveOrientation = window.WallGeometry ? window.WallGeometry.orientationForWallMember(data.orientation, (_a = data.wall_config) == null ? void 0 : _a.rotation) : data.orientation;
@@ -3831,13 +3838,48 @@ function itemFit(item, zone) {
 function shouldLogPlay(item) {
   return !item || item.log_play !== 0;
 }
+let playbackOrder = "sequential";
+let playOrderState = {};
+const zoneOrderState = {};
 function nextActiveIndex(from) {
+  try {
+    if (window.PlayOrder && !(wallConfig && wallConfig.is_leader === false) && !groupSync) {
+      return PlayOrder.nextIndex(playlist, from, function(it) {
+        return scheduleAllows(it);
+      }, playbackOrder, playOrderState);
+    }
+  } catch (e) {
+  }
   if (!playlist.length) return -1;
   for (let i = 1; i <= playlist.length; i++) {
     const idx = (from + i) % playlist.length;
     if (scheduleAllows(playlist[idx])) return idx;
   }
   return -1;
+}
+function peekNextIndex(from) {
+  const saved = playOrderState;
+  playOrderState = { bag: (saved.bag || []).slice(), bagKey: saved.bagKey };
+  try {
+    return nextActiveIndex(from);
+  } finally {
+    playOrderState = saved;
+  }
+}
+let lookaheadFrom = null;
+let lookaheadIdx = -1;
+function commitNextIndex(from) {
+  if (lookaheadFrom === from && lookaheadIdx >= 0 && lookaheadIdx < playlist.length && scheduleAllows(playlist[lookaheadIdx])) {
+    return lookaheadIdx;
+  }
+  const idx = nextActiveIndex(from);
+  lookaheadFrom = from;
+  lookaheadIdx = idx;
+  return idx;
+}
+function clearLookahead() {
+  lookaheadFrom = null;
+  lookaheadIdx = -1;
 }
 function showNothingScheduled() {
   teardownCurrentMedia();
@@ -3937,7 +3979,8 @@ function nextItem() {
       completed: true
     });
   }
-  const idx = nextActiveIndex(currentIndex);
+  const idx = commitNextIndex(currentIndex);
+  clearLookahead();
   if (idx === -1) {
     showNothingScheduled();
     return;
@@ -4236,7 +4279,7 @@ function renderBundleBuffered(item) {
   });
 }
 function reevaluateHeldWidget() {
-  if (nextActiveIndex(currentIndex) === currentIndex) {
+  if (peekNextIndex(currentIndex) === currentIndex) {
     scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
     return;
   }
@@ -4274,7 +4317,7 @@ function cacheImg(src, img) {
   while (keys.length > 4) delete imgPreloadCache[keys.shift()];
 }
 function preloadNextImage() {
-  const nextIdx = nextActiveIndex(currentIndex);
+  const nextIdx = commitNextIndex(currentIndex);
   if (nextIdx < 0 || nextIdx === currentIndex) return;
   const it = playlist[nextIdx];
   if (!it || typeof it.mime_type !== "string" || !it.mime_type.startsWith("image/")) return;
@@ -4689,7 +4732,7 @@ function renderContent(item) {
   if (item && item.widget_id && !isZones && !wallConfig) {
     renderWidgetBuffered(item);
     if (!groupSync) {
-      const held = nextActiveIndex(currentIndex) === currentIndex;
+      const held = peekNextIndex(currentIndex) === currentIndex;
       if (held) scheduleAdvance(reevaluateHeldWidget, WIDGET_SOLO_REFRESH_MS);
       else scheduleAdvance(nextItem, (item.duration_sec || 30) * 1e3);
     }
@@ -4785,7 +4828,16 @@ function renderContent(item) {
     }
   }
 }
-function zoneNextActive(items, from) {
+function zoneNextActive(items, from, zoneId) {
+  try {
+    if (window.PlayOrder) {
+      if (!zoneOrderState[zoneId]) zoneOrderState[zoneId] = {};
+      return PlayOrder.nextIndex(items, from - 1, function(it) {
+        return scheduleAllows(it);
+      }, playbackOrder, zoneOrderState[zoneId]);
+    }
+  } catch (e) {
+  }
   for (let i = 0; i < items.length; i++) {
     const idx = (from + i) % items.length;
     if (scheduleAllows(items[idx])) return idx;
@@ -4847,7 +4899,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     clearTimeout(timers[zone.id]);
     delete timers[zone.id];
   }
-  const activeIdx = zoneNextActive(items, index);
+  const activeIdx = zoneNextActive(items, index, zone.id);
   if (activeIdx === -1) {
     showZoneEmpty(zone, div, items, timers);
     return;

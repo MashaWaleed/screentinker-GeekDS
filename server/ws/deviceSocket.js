@@ -500,13 +500,15 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       WHERE d.id = ?`).get(deviceId);
 
   let assignments = [];
+  let playback_order = 'sequential';
   if (device?.playlist_id) {
-    const playlist = db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(device.playlist_id);
+    const playlist = db.prepare('SELECT published_snapshot, published_playback_order FROM playlists WHERE id = ?').get(device.playlist_id);
     if (playlist?.published_snapshot) {
       try { assignments = JSON.parse(playlist.published_snapshot); } catch (e) { assignments = []; }
       refreshWidgetRevs(assignments);
       refreshContentRevs(assignments);
     }
+    if (playlist && playlist.published_playback_order) playback_order = playlist.published_playback_order;
   }
 
   /*
@@ -643,7 +645,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   const group_sync = wall_config ? null : resolveGroupSync(device, deviceId);
   // #104: shared shape + zone-reset tail so the device payload and the dashboard
   // preview payload (GET /api/playlists/:id/preview-payload) can never drift.
-  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config });
+  return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, playback_order });
 }
 
 // #104: the canonical player payload shape, shared by the device path
@@ -713,7 +715,7 @@ function attachDataSourceBag(items, workspaceId) {
   }
 }
 
-function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config }) {
+function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, playback_order }) {
   let a = Array.isArray(assignments) ? assignments : [];
   // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
   // from the visible list and its config attached as an opaque `transition` on the item it plays into.
@@ -744,6 +746,7 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
     // to a source string, so merging these into that lookup is all any of them needs — no new
     // endpoint, no second round trip, and nothing sent for a workspace that uploaded nothing.
     custom_shaders: customShaderSources(workspace_id, a),
+    playback_order: playback_order || 'sequential',
   };
 }
 

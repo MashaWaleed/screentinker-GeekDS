@@ -67,17 +67,17 @@ function scheduleBlocksFor(db, itemId) {
 }
 
 function capturePlaylist(db, row) {
-  const items = db.prepare(`SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when
+  const items = db.prepare(`SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight
                               FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC, id ASC`).all(row.id)
     .map((it) => ({
       content_id: it.content_id || null, widget_id: it.widget_id || null, child_playlist_id: it.child_playlist_id || null,
       zone_id: it.zone_id || null, sort_order: it.sort_order, duration_sec: it.duration_sec, muted: it.muted ? 1 : 0,
       play_from: it.play_from || null, play_until: it.play_until || null,
       enabled: it.enabled === 0 ? 0 : 1, log_play: it.log_play === 0 ? 0 : 1,
-      fit_mode: it.fit_mode || null, play_when: it.play_when || null,
+      fit_mode: it.fit_mode || null, play_when: it.play_when || null, weight: it.weight || 1,
       schedules: scheduleBlocksFor(db, it.id),
     }));
-  return { name: row.name, description: row.description || '', items };
+  return { name: row.name, description: row.description || '', playback_order: row.playback_order || 'sequential', items };
 }
 
 function captureLayout(db, row) {
@@ -107,7 +107,7 @@ function captureDeck(db, row) {
 }
 
 const CONTENT_FIELDS = ['filename', 'mime_type', 'file_size', 'duration_sec', 'width', 'height', 'remote_url', 'subtitle_url',
-  'subtitle_lang', 'expires_at', 'folder_id', 'bundle_entry', 'byte_digest', 'captions_enabled', 'captions_lang', 'unstable_connection'];
+  'subtitle_lang', 'expires_at', 'folder_id', 'bundle_entry', 'byte_digest', 'captions_enabled', 'captions_lang', 'unstable_connection', 'tags', 'meta'];
 /*
  * The fields a content DRAFT can carry and a release applies, in one place so that what a restore
  * writes into the draft and what publishing the draft copies to the live row cannot drift apart
@@ -425,10 +425,10 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
   } else if (type === 'playlist') {
     const txn = db.transaction(() => {
       db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(id);
-      const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
       for (const it of state.items || []) {
         try {
-          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null);
+          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null, it.weight || 1);
           for (const b of it.schedules || []) {
             const cols = Object.keys(b);
             if (!cols.length) continue;
@@ -441,8 +441,8 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
           if (!/FOREIGN KEY/i.test(e.message)) throw e;   // a referenced asset was deleted: skip the item
         }
       }
-      db.prepare("UPDATE playlists SET name = ?, description = ?, status = 'draft', updated_at = ? WHERE id = ?")
-        .run(state.name || row.name, state.description || '', now, id);
+      db.prepare("UPDATE playlists SET name = ?, description = ?, playback_order = ?, status = 'draft', updated_at = ? WHERE id = ?")
+        .run(state.name || row.name, state.description || '', state.playback_order || row.playback_order || 'sequential', now, id);
     });
     txn();
   } else if (type === 'layout') {
