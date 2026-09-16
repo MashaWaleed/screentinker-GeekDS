@@ -1587,6 +1587,7 @@ export default {
   'playlist.condition.value': 'Value',
   'playlist.condition.clear': 'Clear condition',
   'playlist.condition.hint': 'Skip the item unless this data-source field matches. Evaluated on the screen from the last fetched values. Missing data plays (fail open).',
+  'playlist.condition.no_sources': 'No data sources in this workspace yet. Add one under Data Sources first.',
   'playlist.move_up': 'Move up',
   'playlist.move_down': 'Move down',
   'playlist.remove_item': 'Remove item',

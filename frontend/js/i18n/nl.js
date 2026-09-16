@@ -1720,6 +1720,7 @@ export default {
     'playlist.condition.value': 'Waarde',
     'playlist.condition.clear': 'Voorwaarde wissen',
     'playlist.condition.hint': 'Sla het item over tenzij dit databronveld overeenkomt. Wordt op het scherm geëvalueerd met de laatst opgehaalde waarden. Ontbrekende data speelt af (fail open).',
+    'playlist.condition.no_sources': 'Nog geen databronnen in deze werkruimte. Voeg er eerst een toe onder Databronnen.',
     'playlist.move_up': 'Omhoog verplaatsen',
     'playlist.move_down': 'Omlaag verplaatsen',
     'playlist.remove_item': 'Item verwijderen',

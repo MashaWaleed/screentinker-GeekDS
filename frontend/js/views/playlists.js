@@ -659,6 +659,91 @@ function setClip(items) {
 function getClip() {
   try { return JSON.parse(sessionStorage.getItem(CLIP_KEY) || 'null'); } catch { return null; }
 }
+
+// Field paths a data source offers, derived from its last-fetched values (top level + one nesting).
+function fieldPathsOf(data) {
+  const out = [];
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return out;
+  for (const [k, v] of Object.entries(data)) {
+    out.push(k);
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const k2 of Object.keys(v)) out.push(`${k}.${k2}`);
+    }
+  }
+  return out.slice(0, 100);
+}
+
+// The data-source condition editor: real dropdowns instead of four prompts, validated before send.
+async function editConditionModal(ids, parsed) {
+  let sources = [];
+  try { sources = await api.getDataSources(); } catch { sources = []; }
+  const OPS = [['eq', '= equals'], ['neq', '≠ not equal'], ['gt', '> greater than'],
+    ['gte', '≥ at least'], ['lt', '< less than'], ['lte', '≤ at most'], ['truthy', 'is set / true']];
+  const curOp = (parsed && parsed.op) || 'eq';
+  const opts = sources.map((s) => `<option value="${esc(s.slug)}" ${parsed && parsed.slug === s.slug ? 'selected' : ''}>${esc(s.name || s.slug)}</option>`).join('');
+  const opOpts = OPS.map(([v, l]) => `<option value="${v}" ${curOp === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000';
+  modal.innerHTML = `
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:440px;max-width:92vw">
+      <h3 style="margin-bottom:6px;color:var(--text-primary)">${esc(t('playlist.bulk.condition'))}</h3>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">${esc(t('playlist.condition.hint'))}</p>
+      ${sources.length ? '' : `<p style="color:#fbbf24;font-size:13px;margin-bottom:12px">${esc(t('playlist.condition.no_sources'))}</p>`}
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.slug'))}</label>
+      <select id="condSlug" class="input" style="width:100%;margin:4px 0 12px">${opts}</select>
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.path'))}</label>
+      <input id="condPath" class="input" list="condFields" placeholder="e.g. status or now.title" value="${esc(parsed && parsed.path || '')}" style="width:100%;margin:4px 0 12px">
+      <datalist id="condFields"></datalist>
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
+      <select id="condOp" class="input" style="width:100%;margin:4px 0 12px">${opOpts}</select>
+      <div id="condValueWrap">
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.value'))}</label>
+        <input id="condValue" class="input" value="${esc(parsed && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:8px">
+        <button class="btn btn-secondary" id="condClear">${esc(t('playlist.condition.clear'))}</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" id="condCancel">${esc(t('common.cancel'))}</button>
+          <button class="btn btn-primary" id="condApply">${esc(t('playlist.bulk.apply'))}</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const slugSel = modal.querySelector('#condSlug');
+  const fieldList = modal.querySelector('#condFields');
+  const opSel = modal.querySelector('#condOp');
+  const valWrap = modal.querySelector('#condValueWrap');
+  const bySlug = new Map(sources.map((s) => [s.slug, s]));
+  const refreshFields = () => {
+    const src = bySlug.get(slugSel.value);
+    fieldList.innerHTML = fieldPathsOf(src && src.data).map((p) => `<option value="${esc(p)}">`).join('');
+  };
+  const refreshValue = () => { valWrap.hidden = opSel.value === 'truthy'; };
+  slugSel.addEventListener('change', refreshFields);
+  opSel.addEventListener('change', refreshValue);
+  refreshFields(); refreshValue();
+
+  const close = () => modal.remove();
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  modal.querySelector('#condCancel').addEventListener('click', close);
+  modal.querySelector('#condClear').addEventListener('click', async () => {
+    close(); await runSelection({ action: 'play_when', ids, play_when: null });
+    selectedItemIds.clear(); paintSelectBar(); showToast(t('playlist.bulk.updated').replace('{n}', ids.length));
+  });
+  modal.querySelector('#condApply').addEventListener('click', async () => {
+    const slug = slugSel.value;
+    const path = modal.querySelector('#condPath').value.trim();
+    const op = opSel.value;
+    const value = op === 'truthy' ? '' : modal.querySelector('#condValue').value;
+    if (!slug) { showToast(t('playlist.condition.no_sources'), 'error'); return; }
+    if (!path) { modal.querySelector('#condPath').focus(); return; }
+    close();
+    const r = await runSelection({ action: 'play_when', ids, play_when: { slug, path, op, value } });
+    if (r) { showToast(t('playlist.bulk.updated').replace('{n}', ids.length)); }
+  });
+}
 function paintSelectBar() {
   const bar = document.getElementById('playlistSelectBar');
   if (!bar) return;
@@ -862,17 +947,7 @@ async function handleSelection(act) {
   if (act === 'condition') {
     const cur = rows[0] && rows[0].play_when;
     const parsed = typeof cur === 'string' ? (() => { try { return JSON.parse(cur); } catch { return null; } })() : cur;
-    if (!confirm(t('playlist.condition.hint'))) return;
-    const slug = prompt(t('playlist.condition.slug'), (parsed && parsed.slug) || '');
-    if (slug == null) return;
-    if (!slug.trim()) return runSelection({ action: 'play_when', ids, play_when: null });
-    const path = prompt(t('playlist.condition.path'), (parsed && parsed.path) || '');
-    if (path == null) return;
-    const op = prompt(t('playlist.condition.op'), (parsed && parsed.op) || 'eq');
-    if (op == null) return;
-    const value = prompt(t('playlist.condition.value'), parsed && parsed.value != null ? String(parsed.value) : '');
-    if (value == null) return;
-    return runSelection({ action: 'play_when', ids, play_when: { slug: slug.trim(), path, op, value } });
+    return editConditionModal(ids, parsed);
   }
 }
 

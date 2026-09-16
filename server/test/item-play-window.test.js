@@ -120,6 +120,10 @@ test('selection bulk route and playlist editor checkboxes exist', () => {
   assert.match(ui, /item-select/);
   assert.match(ui, /playlistSelectBar/);
   assert.match(ui, /action: 'paste'/);
+  // The data-source condition is edited via a picker modal (data-source dropdown + op select),
+  // not raw prompts.
+  assert.match(ui, /editConditionModal/);
+  assert.match(ui, /getDataSources\(\)/);
 });
 
 test('players skip with itemShouldPlay and honour log_play / fit_mode', () => {
