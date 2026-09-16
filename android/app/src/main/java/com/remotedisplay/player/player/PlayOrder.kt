@@ -57,19 +57,28 @@ object PlayOrder {
         if (el.isEmpty()) return -1
         val key = el.sorted().joinToString(",")
         if (state.bag.isEmpty() || state.bagKey != key) {
-            val fill = el.filter { el.size == 1 || it != from }.ifEmpty { el }.toMutableList()
-            shuffle(fill, rnd)
-            state.bag = fill
+            state.bag = makeBag(el, from, rnd)
             state.bagKey = key
         }
         while (state.bag.isNotEmpty() && state.bag.first() !in el) state.bag.removeAt(0)
         if (state.bag.isEmpty()) {
-            val refill = el.filter { el.size == 1 || it != from }.ifEmpty { el }.toMutableList()
-            shuffle(refill, rnd)
-            state.bag = refill
+            state.bag = makeBag(el, from, rnd)
             state.bagKey = key
         }
         return state.bag.removeAt(0)
+    }
+
+    // A full bag holds EVERY eligible index once (nothing under-played over a cycle),
+    // shuffled. To avoid an immediate repeat across the bag boundary, if the first
+    // draw would be the item just played and another can lead, swap it deeper.
+    private fun makeBag(el: List<Int>, from: Int, rnd: () -> Double): MutableList<Int> {
+        val bag = el.toMutableList()
+        shuffle(bag, rnd)
+        if (bag.size > 1 && bag[0] == from) {
+            val j = 1 + (rnd() * (bag.size - 1)).toInt().coerceIn(0, bag.size - 2)
+            val t = bag[0]; bag[0] = bag[j]; bag[j] = t
+        }
+        return bag
     }
 
     private fun nextWeighted(

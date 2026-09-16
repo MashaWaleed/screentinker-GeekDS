@@ -1642,6 +1642,7 @@ export default {
   'playlist.order.sequential': 'In order',
   'playlist.order.shuffle': 'Shuffle',
   'playlist.order.weighted': 'Weighted random',
+  'playlist.weight_capped': 'Weight capped at 1000.',
   'playlist.sort_apply': 'Apply order',
   'playlist.sort.manual': 'Manual order',
   'playlist.sort.name_asc': 'Name (A-Z)',

@@ -1007,8 +1007,9 @@ async function handleSelection(act) {
   if (act === 'weight') {
     const raw = prompt(t('playlist.bulk.weight'), (rows[0] && rows[0].weight) || 1);
     if (raw == null) return;
-    const w = parseInt(raw, 10);
+    let w = parseInt(raw, 10);
     if (!w || w < 1) return;
+    if (w > 1000) { w = 1000; showToast(t('playlist.weight_capped'), 'info'); }
     const r = await runSelection({ action: 'weight', ids, weight: w });
     if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
     return;
@@ -1143,8 +1144,11 @@ function renderItems(items) {
   itemsEl.querySelectorAll('.item-weight').forEach(input => {
     input.addEventListener('change', async (e) => {
       const itemId = e.target.dataset.itemId;
-      const val = parseInt(e.target.value, 10);
+      let val = parseInt(e.target.value, 10);
       if (!val || val < 1) { e.target.value = 1; return; }
+      // Weight caps at 1000 (the server clamps too); reflect it so the field never
+      // shows a value the stored weight will not match.
+      if (val > 1000) { val = 1000; e.target.value = 1000; showToast(t('playlist.weight_capped'), 'info'); }
       try {
         await api.updatePlaylistItem(currentPlaylistId, itemId, { weight: val });
         refreshAfterMutation();

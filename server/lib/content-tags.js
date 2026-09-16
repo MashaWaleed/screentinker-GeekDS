@@ -29,6 +29,21 @@ function normalizeTags(v) {
   return out;
 }
 
+// Meta values are free-form labels (room names, ids, urls). Keys are charset-locked
+// (TAG_RE); values only get length + a defensive scrub of control chars and angle
+// brackets, so a value can never carry a raw tag into a future unescaped render.
+// Written as a char-code filter (not a regex literal) to keep this source pure ASCII.
+function scrubVal(s) {
+  const str = String(s);
+  let out = '';
+  for (let i = 0; i < str.length && out.length < MAX_VAL; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x3c /* < */ || c === 0x3e /* > */) continue;
+    out += str[i];
+  }
+  return out;
+}
+
 function normalizeMeta(v) {
   if (v === undefined) return undefined;
   if (v == null || v === '') return {};
@@ -47,7 +62,7 @@ function normalizeMeta(v) {
   for (const [k, val] of Object.entries(obj)) {
     const key = String(k).trim().slice(0, MAX_KEY);
     if (!key || !TAG_RE.test(key)) continue;
-    out[key] = val == null ? '' : String(val).slice(0, MAX_VAL);
+    out[key] = val == null ? '' : scrubVal(val);
     if (++n >= MAX_META) break;
   }
   return out;

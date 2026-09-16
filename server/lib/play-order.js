@@ -55,22 +55,30 @@
     return eligible.slice().sort(function (a, b) { return a - b; }).join(',');
   }
 
+  // A full bag holds EVERY eligible index once (so nothing is under-played over a
+  // cycle), shuffled. To avoid an immediate repeat across the bag boundary, if the
+  // first draw would be the item just played and another can lead, swap it deeper.
+  function makeBag(eligible, from, rnd) {
+    var bag = shuffleInPlace(eligible.slice(), rnd);
+    if (bag.length > 1 && bag[0] === from) {
+      var j = 1 + Math.floor(rnd() * (bag.length - 1));
+      var t = bag[0]; bag[0] = bag[j]; bag[j] = t;
+    }
+    return bag;
+  }
+
   function nextShuffle(items, from, allows, state, rnd) {
     var eligible = eligibleIndices(items, allows);
     if (!eligible.length) return -1;
     var key = bagKey(eligible);
     if (!state.bag || state.bagKey !== key) {
-      var fill = eligible.filter(function (i) { return eligible.length === 1 || i !== from; });
-      if (!fill.length) fill = eligible.slice();
-      state.bag = shuffleInPlace(fill, rnd);
+      state.bag = makeBag(eligible, from, rnd);
       state.bagKey = key;
     }
     // Drop anything that has since become ineligible (daypart closed mid-bag).
     while (state.bag.length && eligible.indexOf(state.bag[0]) === -1) state.bag.shift();
     if (!state.bag.length) {
-      var refill = eligible.filter(function (i) { return eligible.length === 1 || i !== from; });
-      if (!refill.length) refill = eligible.slice();
-      state.bag = shuffleInPlace(refill, rnd);
+      state.bag = makeBag(eligible, from, rnd);
       state.bagKey = key;
     }
     return state.bag.shift();

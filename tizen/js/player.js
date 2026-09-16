@@ -376,7 +376,11 @@ PlaylistPlayer.prototype.anyScheduled = function () {
 
 PlaylistPlayer.prototype.firstActiveIndex = function () {
   try {
-    if (typeof PlayOrder !== 'undefined') {
+    // Wall followers and group-sync (scheduleDriven) members MUST stay sequential — the
+    // leader index / shared clock is the source of truth, and a private shuffle would
+    // desync the wall. Today they never reach here (the solo timer is suppressed), so this
+    // guard is defense-in-depth matching the web player.
+    if (typeof PlayOrder !== 'undefined' && !this.wallFollower && !this.scheduleDriven) {
       return PlayOrder.firstIndex(this.items, function (it) { return this.scheduleAllows(it); }.bind(this), this.playbackOrder || 'sequential', this.playOrderState);
     }
   } catch (e) {}
@@ -386,7 +390,8 @@ PlaylistPlayer.prototype.firstActiveIndex = function () {
 
 PlaylistPlayer.prototype.nextActiveIndex = function (from) {
   try {
-    if (typeof PlayOrder !== 'undefined') {
+    // See firstActiveIndex: solo/fullscreen shuffles, wall-followers and group-sync stay sequential.
+    if (typeof PlayOrder !== 'undefined' && !this.wallFollower && !this.scheduleDriven) {
       return PlayOrder.nextIndex(this.items, from, function (it) { return this.scheduleAllows(it); }.bind(this), this.playbackOrder || 'sequential', this.playOrderState);
     }
   } catch (e) {}

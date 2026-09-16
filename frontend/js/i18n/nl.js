@@ -1784,6 +1784,7 @@ export default {
     'playlist.order.sequential': 'Op volgorde',
     'playlist.order.shuffle': 'Shuffle',
     'playlist.order.weighted': 'Gewogen willekeurig',
+    'playlist.weight_capped': 'Gewicht gemaximeerd op 1000.',
     'playlist.sort_apply': 'Volgorde toepassen',
     'playlist.sort.manual': 'Handmatige volgorde',
     'playlist.sort.name_asc': 'Naam (A-Z)',

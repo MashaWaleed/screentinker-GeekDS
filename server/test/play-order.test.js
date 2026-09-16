@@ -57,6 +57,44 @@ test('shuffle refills when membership changes', () => {
   assert.ok(b === 0 || b === 1 || b === 2);
 });
 
+test('shuffle bags are full-N: every eligible item plays once per cycle (no under-play)', () => {
+  // Regression for the N-1 bag shrink: the item that ended a bag used to be excluded
+  // from the WHOLE next bag, so it played less often. Full-N bags draw each item once.
+  const list = items(4);
+  const state = {};
+  const rnd = rng([0.9, 0.1, 0.5, 0.2, 0.8, 0.3, 0.7, 0.4, 0.6, 0.05]);
+  const counts = [0, 0, 0, 0];
+  let from = -1;
+  for (let i = 0; i < 12; i++) { // 3 full bags of 4
+    from = nextIndex(list, from, all, 'shuffle', state, rnd);
+    counts[from]++;
+  }
+  assert.deepEqual(counts, [3, 3, 3, 3], 'each item drawn exactly once per bag across 3 bags');
+});
+
+test('single-item shuffle/weighted returns the lone item without looping', () => {
+  const one = items(1);
+  const sState = {};
+  for (let i = 0; i < 5; i++) assert.equal(nextIndex(one, 0, all, 'shuffle', sState), 0);
+  for (let i = 0; i < 5; i++) assert.equal(nextIndex(one, 0, all, 'weighted', {}), 0);
+});
+
+test('a non-empty list with nothing eligible returns -1 (idle, not a loop)', () => {
+  const list = items(3);
+  const none = () => false;
+  assert.equal(nextIndex(list, 0, none, 'shuffle', {}), -1);
+  assert.equal(nextIndex(list, 0, none, 'weighted', {}), -1);
+  assert.equal(nextIndex(list, 0, none, 'sequential'), -1);
+});
+
+test('weighted distribution follows the weights (proportional bands)', () => {
+  const list = [{ weight: 1 }, { weight: 8 }, { weight: 1 }]; // total 10, cumulative 1,9,10
+  const pick = (r) => nextIndex(list, -1, all, 'weighted', {}, rng([r]));
+  assert.equal(pick(0.05), 0); // 0.5  < 1
+  assert.equal(pick(0.5), 1);  // 5.0  in [1,9)
+  assert.equal(pick(0.95), 2); // 9.5  in [9,10)
+});
+
 test('weighted picks by weight and avoids the item just played', () => {
   const list = [{ weight: 1 }, { weight: 100 }, { weight: 1 }];
   const rnd = rng([0.99]); // always land at the top of the remaining pool

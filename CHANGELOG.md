@@ -11,8 +11,8 @@ data-source gate, with a When dropdown. Tags and metadata are copied onto the pu
 a screen still skips with the WAN down.
 
 **Order on a playlist: in order (default), shuffle, or weighted random.** Shuffle draws from a
-no-repeat bag and refills when empty; whichever item ends a bag is held out of the next bag, so it
-waits one cycle before it can repeat. Weighted uses each item's weight (1-1000, default 1) and
+no-repeat bag: every item plays once per cycle, and the bag is reshuffled so the same item never
+plays twice in a row across a bag boundary. Weighted uses each item's weight (1-1000, default 1) and
 avoids playing the same item twice in a row when another eligible item exists. Draft vs published,
 same as every other playlist field: publish to push to devices. Old players ignore the extra fields
 and keep playing in order.
