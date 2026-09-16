@@ -145,17 +145,13 @@
     return cur;
   }
 
-  // play_when: { slug, path, op, value }. Missing/unknown op fails OPEN (plays).
-  function conditionOk(when, data) {
-    if (!when) return true;
-    var op = when.op || 'eq';
-    // Fail open BEFORE any operator: a missing/unloaded data bag must play the item, including for
-    // 'truthy' (which previously evaluated !!undefined === false and blanked the item until the
-    // source first loaded — a fail-closed path that contradicts the "missing data plays" contract).
-    if (data === undefined || data === null) return true;
-    var lhs = getPath(data, when.path);
-    if (op === 'truthy') return !!lhs;
-    var rhs = when.value;
+  // play_when:
+  //   { type:'ds', slug, path, op, value }  — data-source bag (type optional = ds)
+  //   { type:'tag', op:'has'|'lacks', value } — content tags on the item
+  //   { type:'meta', path, op, value } — content meta key=value on the item
+  // Missing/unknown op fails OPEN (plays). Tag/meta never consult the DS bag.
+  function compareOp(lhs, op, rhs) {
+    if (op === 'truthy' || op === 'has') return !!lhs && lhs !== '';
     if (op === 'eq') return String(lhs) === String(rhs);
     if (op === 'neq') return String(lhs) !== String(rhs);
     var ln = Number(lhs), rn = Number(rhs);
@@ -165,6 +161,26 @@
     if (op === 'lt') return ln < rn;
     if (op === 'lte') return ln <= rn;
     return true;
+  }
+
+  function conditionOk(when, data, item) {
+    if (!when) return true;
+    var type = when.type || 'ds';
+    if (type === 'tag') {
+      var tags = (item && item.tags) || (data && data.tags) || [];
+      var want = String(when.value || '').toLowerCase();
+      var has = false;
+      for (var i = 0; i < tags.length; i++) if (String(tags[i]).toLowerCase() === want) { has = true; break; }
+      return when.op === 'lacks' ? !has : has;
+    }
+    if (type === 'meta') {
+      var meta = (item && item.meta) || (data && data.meta) || {};
+      return compareOp(getPath(meta, when.path), when.op || 'eq', when.value);
+    }
+    var op = when.op || 'eq';
+    if (data === undefined || data === null) return true;
+    var lhs = getPath(data, when.path);
+    return compareOp(lhs, op, when.value);
   }
 
   function isItemActiveNow(blocks, utcNow, ianaTz, window) {
@@ -186,7 +202,7 @@
       if (!item) return true;
       if (item.enabled === 0 || item.enabled === false) return false;
       if (!isItemActiveNow(item.schedules, utcNow, ianaTz, windowOf(item))) return false;
-      return conditionOk(item.play_when, item._ds);
+      return conditionOk(item.play_when, item._ds, item);
     } catch (e) {
       return true;
     }

@@ -47,6 +47,7 @@ const { postprocess }       = require('../lib/embedded-postprocess');
 const pairLockout           = require('../lib/pair-lockout');
 const { sixDigitCode }      = require('../lib/numeric-code');
 const ScheduleEval          = require('../lib/schedule-eval');
+const PlayOrder             = require('../lib/play-order');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
 
 // ─── Auth helper ───────────────────────────────────────────────────────────────
@@ -278,41 +279,44 @@ function resolveCurrentItem(deviceId, forceIndex) {
   const tz = resolveDeviceTimezone(device);
 
   const allItems = getPublishedPlaylistItems(playlist_id);
-  const items = allItems.filter((it) => ScheduleEval.itemShouldPlay(it, Date.now(), tz));
-  if (!items.length) return null;
+  const allows = (it) => ScheduleEval.itemShouldPlay(it, Date.now(), tz);
+  const modeRow = db.prepare('SELECT published_playback_order FROM playlists WHERE id = ?').get(playlist_id);
+  const mode = (modeRow && modeRow.published_playback_order) || 'sequential';
+  if (!allItems.length) return null;
 
   const now = Math.floor(Date.now() / 1000);
 
-  // If caller forces an index (for testing), honour it directly.
   if (forceIndex !== undefined && forceIndex !== null) {
     const raw = Number(forceIndex);
     const parsed = Number.isInteger(raw) ? raw : 0;
-    const idx  = Math.max(0, Math.min(parsed, items.length - 1));
-    const item = items[idx];
-    return { item, content: item, itemIndex: idx, expiresIn: item.duration_sec || 30, total: items.length };
+    const idx  = Math.max(0, Math.min(parsed, allItems.length - 1));
+    const item = allItems[idx];
+    return { item, content: item, itemIndex: idx, expiresIn: item.duration_sec || 30, total: allItems.length };
   }
 
-  // Load or initialise cursor
   let cursor = CURSOR_GET.get(deviceId);
   if (!cursor) {
     CURSOR_UPSERT.run(deviceId, 0);
     cursor = { item_index: 0, started_at: now };
   }
 
-  let idx        = cursor.item_index % items.length;
+  let idx        = cursor.item_index;
   let startedAt  = cursor.started_at;
-  const item     = items[idx];
-  const duration = item.duration_sec || 30;
+  const st = (resolveCurrentItem._order = resolveCurrentItem._order || new Map());
+  if (!st.has(deviceId)) st.set(deviceId, {});
+  const state = st.get(deviceId);
+  const duration = (allItems[idx] && (allItems[idx].duration_sec || 30)) || 30;
   const elapsed  = now - startedAt;
 
-  // Advance if the current item's time has passed
-  if (elapsed >= duration) {
-    idx = (idx + 1) % items.length;
+  if (idx < 0 || idx >= allItems.length || elapsed >= duration || !allows(allItems[idx])) {
+    const next = PlayOrder.nextIndex(allItems, idx, allows, mode, state);
+    if (next < 0) return null;
+    idx = next;
     CURSOR_UPSERT.run(deviceId, idx);
     startedAt = now;
   }
 
-  const currentItem = items[idx];
+  const currentItem = allItems[idx];
   const currentDuration = currentItem.duration_sec || 30;
   const expiresIn = Math.max(1, currentDuration - (now - startedAt));
 
@@ -321,7 +325,7 @@ function resolveCurrentItem(deviceId, forceIndex) {
     content: currentItem,
     itemIndex: idx,
     expiresIn,
-    total: items.length,
+    total: allItems.length,
   };
 }
 

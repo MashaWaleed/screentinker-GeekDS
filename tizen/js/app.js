@@ -944,7 +944,7 @@
       player.setScheduleDriven(false);  // #157: wall gates on wallFollower, not scheduleDriven
       wallController.apply(payload.wall_config);
       player.setTimezone(payload.timezone || null);
-      player.load(payload.assignments || []);
+      player.load(payload.assignments || [], payload.playback_order);
       stageOwner = 'player';
       return;
     }
@@ -969,6 +969,7 @@
       // zone renderer's unchanged-sig guard then declines to repaint (#162).
       if (stageOwner !== 'zones') { player.stop(); zoneRenderer.invalidate(); }
       zoneRenderer.setTimezone(payload.timezone || null); // #74/#75: effective tz
+      zoneRenderer.setPlaybackOrder(payload.playback_order || 'sequential');
       zoneRenderer.render(layout, payload.assignments || []);
       stageOwner = 'zones';
     } else {
@@ -979,7 +980,7 @@
       // away from it, and invalidate the player's sig so it repaints on the switch.
       if (stageOwner !== 'player') { zoneRenderer.clear(); player.invalidate(); }
       player.setTimezone(payload.timezone || null); // #74/#75: effective tz for schedule eval
-      player.load(payload.assignments || []);
+      player.load(payload.assignments || [], payload.playback_order);
       stageOwner = 'player';
     }
   }

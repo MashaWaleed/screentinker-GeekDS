@@ -51,16 +51,30 @@ object ScheduleEval {
      * value bag for this condition's slug (the server already did bag[slug]); `path` traverses into
      * it. `op` is one of eq/neq/gt/gte/lt/lte/truthy. Value is compared as string (eq/neq) or number.
      */
-    data class Condition(val path: String, val op: String, val value: String?)
+    data class Condition(val type: String = "ds", val path: String = "", val op: String = "eq", val value: String?)
 
-    /** Parse the item's `play_when` object; null when absent or malformed (no path). */
     fun parseCondition(o: JSONObject?): Condition? {
         if (o == null) return null
+        val type = o.optString("type", "").ifEmpty {
+            if (o.optString("slug", "").isNotEmpty()) "ds" else if (o.has("tag") || o.optString("op") == "has" || o.optString("op") == "lacks") "tag" else "ds"
+        }
+        if (type == "tag") {
+            val v = o.optString("value", o.optString("tag", ""))
+            if (v.isEmpty()) return null
+            return Condition(type = "tag", op = if (o.optString("op") == "lacks") "lacks" else "has", path = "", value = v)
+        }
         val path = o.optString("path", "")
         if (path.isEmpty()) return null
         val op = o.optString("op", "eq").ifEmpty { "eq" }
         val value = if (o.isNull("value")) null else o.optString("value", "")
-        return Condition(path, op, value)
+        return Condition(type = type.ifEmpty { "ds" }, path = path, op = op, value = value)
+    }
+
+    fun tagOk(cond: Condition?, tags: List<String>): Boolean {
+        if (cond == null) return true
+        val want = (cond.value ?: "").lowercase()
+        val has = tags.any { it.lowercase() == want }
+        return if (cond.op == "lacks") !has else has
     }
 
     /**

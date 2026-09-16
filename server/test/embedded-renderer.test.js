@@ -33,14 +33,15 @@ db.exec(`
   );
   CREATE TABLE playlists (
     id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, status TEXT DEFAULT 'published',
-    published_snapshot TEXT, published_structure TEXT, updated_at INTEGER DEFAULT 0
+    published_snapshot TEXT, published_structure TEXT, updated_at INTEGER DEFAULT 0,
+    playback_order TEXT DEFAULT 'sequential', published_playback_order TEXT
   );
   CREATE TABLE playlist_items (
     id TEXT PRIMARY KEY, playlist_id TEXT, content_id TEXT,
     sort_order INTEGER DEFAULT 0, duration_sec INTEGER DEFAULT 30, updated_at INTEGER DEFAULT 0,
     zone_id TEXT, widget_id TEXT, child_playlist_id TEXT, muted INTEGER DEFAULT 0,
     play_from TEXT, play_until TEXT, enabled INTEGER DEFAULT 1, log_play INTEGER DEFAULT 1,
-    fit_mode TEXT, play_when TEXT
+    fit_mode TEXT, play_when TEXT, weight INTEGER DEFAULT 1
   );
   CREATE TABLE playlist_item_schedules (
     id TEXT PRIMARY KEY, playlist_item_id TEXT, active_days TEXT,
@@ -59,7 +60,8 @@ db.exec(`
     -- column made that whole refresh branch throw and be swallowed, silently untested.
     created_at INTEGER NOT NULL DEFAULT 0,
     expires_at INTEGER, unstable_connection INTEGER DEFAULT 0,
-    captions_enabled INTEGER DEFAULT 0, captions_lang TEXT, subtitle_url TEXT, subtitle_lang TEXT
+    captions_enabled INTEGER DEFAULT 0, captions_lang TEXT, subtitle_url TEXT, subtitle_lang TEXT,
+    tags TEXT, meta TEXT
   );
   CREATE TABLE embedded_cursor (
     device_id TEXT PRIMARY KEY, item_index INTEGER DEFAULT 0, started_at INTEGER DEFAULT 0

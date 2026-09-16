@@ -37,6 +37,9 @@ data class PlaylistItem(
     // attached for its slug. Fails open when the bag is missing. See ScheduleEval.conditionOk.
     val playWhen: ScheduleEval.Condition? = null,
     val dataBag: JSONObject? = null,
+    val tags: List<String> = emptyList(),
+    val meta: JSONObject? = null,
+    val weight: Int = 1,
     /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
@@ -99,6 +102,8 @@ class PlaylistController(
     // #74/#75: per-item scheduling state
     @Volatile private var effectiveTimezone: String? = null
     private var retryRunnable: Runnable? = null
+    private var playbackOrder: String = "sequential"
+    private var playOrderState = PlayOrder.State()
 
     // #157: when a playlist update REMOVES the item currently on screen (e.g. it just expired),
     // we don't yank it off / restart — the current item plays out and we rotate into this stashed
@@ -211,7 +216,9 @@ class PlaylistController(
     val currentContentId: String?
         get() = currentItem?.contentId
 
-    fun updatePlaylist(assignmentsJson: JSONArray) {
+    fun updatePlaylist(assignmentsJson: JSONArray, order: String = "sequential") {
+        if (order != playbackOrder) playOrderState = PlayOrder.State()
+        playbackOrder = when (order) { "shuffle", "weighted" -> order; else -> "sequential" }
         Log.i("PlaylistController", "Received JSONArray with ${assignmentsJson.length()} items")
 
         // Build new list
@@ -243,6 +250,9 @@ class PlaylistController(
                     fitMode = if (obj.isNull("fit_mode")) null else obj.optString("fit_mode", "").ifEmpty { null },
                     playWhen = ScheduleEval.parseCondition(obj.optJSONObject("play_when")),
                     dataBag = obj.optJSONObject("_ds"),
+                    tags = parseTags(obj.optJSONArray("tags")),
+                    meta = obj.optJSONObject("meta"),
+                    weight = obj.optInt("weight", 1).coerceAtLeast(1),
                     transition = Transitions.parse(obj.optJSONObject("transition")),
                     slideAudio = parseSlideAudio(obj.optJSONObject("audio"))
                 )
@@ -271,7 +281,8 @@ class PlaylistController(
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
             } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
-            "|" + (it.playWhen?.let { c -> c.path + c.op + (c.value ?: "") } ?: "")
+            "|" + (it.playWhen?.let { c -> c.type + c.path + c.op + (c.value ?: "") } ?: "") +
+            "|" + it.tags.joinToString(",") + "|" + (it.meta?.toString() ?: "")
         val oldContentIds = items.map(::sig)
         val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds
@@ -284,7 +295,10 @@ class PlaylistController(
             var durChanged = false
             for (i in items.indices) {
                 val ni = newItems.getOrNull(i) ?: continue
-                if (items[i].durationSec != ni.durationSec) { items[i] = items[i].copy(durationSec = ni.durationSec); durChanged = true }
+                if (items[i].durationSec != ni.durationSec || items[i].weight != ni.weight) {
+                    items[i] = items[i].copy(durationSec = ni.durationSec, weight = ni.weight)
+                    durChanged = true
+                }
             }
             Log.i("PlaylistController", if (durChanged) "Durations updated in place (${items.size} items), not interrupting" else "Playlist unchanged (${items.size} items), not interrupting playback")
             return
@@ -614,10 +628,11 @@ class PlaylistController(
                     effectiveTimezone,
                     ScheduleEval.windowOf(item.playFrom, item.playUntil)
                 )) false
-            // Data-source condition, evaluated on the same _ds bag the web/Tizen/e-ink players use.
-            // Fails open on a missing bag (see ScheduleEval.conditionOk), so this can only ever
-            // REMOVE an item the window already allowed, never blank a screen on missing data.
-            else ScheduleEval.conditionOk(item.playWhen, item.dataBag)
+            else when (item.playWhen?.type) {
+                "tag" -> ScheduleEval.tagOk(item.playWhen, item.tags)
+                "meta" -> ScheduleEval.conditionOk(item.playWhen, item.meta ?: org.json.JSONObject())
+                else -> ScheduleEval.conditionOk(item.playWhen, item.dataBag)
+            }
         } catch (e: Throwable) { true }
 
     // #group-sync schedule engine. Lay the deterministic playlist (each active item occupies a
@@ -661,11 +676,39 @@ class PlaylistController(
      * future call site cannot accidentally get one pass and not the other — which is precisely how
      * the single-pass version came to be the only behaviour.
      */
-    private fun firstPlayable(): Int =
-        PlaylistSelection.firstPlayableOrStale(items.size, { playableNow(it) }, { playableStale(it) })
+    private fun firstPlayable(): Int {
+        if (playbackOrder == "shuffle" || playbackOrder == "weighted") {
+            var from = -1
+            repeat(items.size) {
+                val cand = PlayOrder.nextIndex(items, from, ::scheduleAllows, playbackOrder, playOrderState)
+                if (cand < 0) return -1
+                if (playableNow(cand) || playableStale(cand)) return cand
+                from = cand
+            }
+            return -1
+        }
+        return PlaylistSelection.firstPlayableOrStale(items.size, { playableNow(it) }, { playableStale(it) })
+    }
 
-    private fun nextPlayable(from: Int): Int =
-        PlaylistSelection.nextPlayableOrStale(items.size, from, { playableNow(it) }, { playableStale(it) })
+    private fun nextPlayable(from: Int): Int {
+        if (playbackOrder == "shuffle" || playbackOrder == "weighted") {
+            var f = from
+            repeat(items.size) {
+                val cand = PlayOrder.nextIndex(items, f, ::scheduleAllows, playbackOrder, playOrderState)
+                if (cand < 0) return -1
+                if (playableNow(cand) || playableStale(cand)) return cand
+                f = cand
+            }
+            return -1
+        }
+        return PlaylistSelection.nextPlayableOrStale(items.size, from, { playableNow(it) }, { playableStale(it) })
+    }
+
+    // Existence only — must not consume the shuffle bag.
+    private fun firstActiveIndex(): Int {
+        for (i in items.indices) if (scheduleAllows(items[i])) return i
+        return -1
+    }
 
     // Screen-resilience: the scheduled item(s) exist but their content isn't downloaded yet.
     // NEVER blank a screen that is already showing content — keep it and re-check soon (the
@@ -698,20 +741,6 @@ class PlaylistController(
             }
         }
         handler.postDelayed(retryRunnable!!, CONTENT_RECHECK_MS)
-    }
-
-    private fun firstActiveIndex(): Int {
-        for (i in items.indices) if (scheduleAllows(items[i])) return i
-        return -1
-    }
-
-    private fun nextActiveIndex(from: Int): Int {
-        if (items.isEmpty()) return -1
-        for (i in 1..items.size) {
-            val idx = (from + i) % items.size
-            if (scheduleAllows(items[idx])) return idx
-        }
-        return -1
     }
 
     // Every item filtered out: show the idle screen and re-check shortly, since a
@@ -753,6 +782,16 @@ class PlaylistController(
             musicVolume = o.optDouble("music_volume", 0.4).toFloat(),
         )
         return if (a.isEmpty) null else a
+    }
+
+    private fun parseTags(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val s = arr.optString(i, "").trim()
+            if (s.isNotEmpty()) out.add(s)
+        }
+        return out
     }
 
     private fun parseSchedules(arr: JSONArray?): List<ScheduleEval.Block> {

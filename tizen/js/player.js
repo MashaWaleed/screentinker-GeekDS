@@ -144,7 +144,11 @@ PlaylistPlayer.prototype._releasePreloadImage = function () {
   this.preloadImgEl = null; this.preloadImgIdx = -1;
 };
 
-PlaylistPlayer.prototype.load = function (assignments) {
+PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
+  var nextOrder = playbackOrder || this.playbackOrder || 'sequential';
+  if (nextOrder !== this.playbackOrder) this.playOrderState = {};
+  this.playbackOrder = nextOrder;
+  this.playOrderState = this.playOrderState || {};
   // B3: a malformed device:playlist-update with a non-array `assignments` used to throw
   // (.filter is not a function) out of the socket handler; coerce to [] instead.
   var items = (Array.isArray(assignments) ? assignments : []).filter(function (a) {
@@ -161,13 +165,14 @@ PlaylistPlayer.prototype.load = function (assignments) {
       // widget_rev for the same reason as schedules and transition above: a widget's IDENTITY
       // is unchanged when it is EDITED, so a content edit produced an identical signature, the
       // update was treated as unchanged, and the screen kept the old render until a restart.
-      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.transition || null];
+      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.tags || [], a.meta || {}, a.transition || null];
   }));
   if (sig === this.sig && this.items.length) {
-    // In-place duration refresh: patch duration_sec on the live items so a duration edit takes effect
-    // (group schedule tick re-anchors; solo advance uses it next) WITHOUT restarting playback.
+    // In-place duration/weight refresh: patch live items so a duration or weight edit takes effect
+    // WITHOUT restarting playback.
     for (var k = 0; k < this.items.length && k < items.length; k++) {
       if (this.items[k].duration_sec !== items[k].duration_sec) this.items[k].duration_sec = items[k].duration_sec;
+      if (this.items[k].weight !== items[k].weight) this.items[k].weight = items[k].weight;
     }
     return;
   }
@@ -370,11 +375,26 @@ PlaylistPlayer.prototype.anyScheduled = function () {
 };
 
 PlaylistPlayer.prototype.firstActiveIndex = function () {
+  try {
+    // Wall followers and group-sync (scheduleDriven) members MUST stay sequential — the
+    // leader index / shared clock is the source of truth, and a private shuffle would
+    // desync the wall. Today they never reach here (the solo timer is suppressed), so this
+    // guard is defense-in-depth matching the web player.
+    if (typeof PlayOrder !== 'undefined' && !this.wallFollower && !this.scheduleDriven) {
+      return PlayOrder.firstIndex(this.items, function (it) { return this.scheduleAllows(it); }.bind(this), this.playbackOrder || 'sequential', this.playOrderState);
+    }
+  } catch (e) {}
   for (var i = 0; i < this.items.length; i++) if (this.scheduleAllows(this.items[i])) return i;
   return -1;
 };
 
 PlaylistPlayer.prototype.nextActiveIndex = function (from) {
+  try {
+    // See firstActiveIndex: solo/fullscreen shuffles, wall-followers and group-sync stay sequential.
+    if (typeof PlayOrder !== 'undefined' && !this.wallFollower && !this.scheduleDriven) {
+      return PlayOrder.nextIndex(this.items, from, function (it) { return this.scheduleAllows(it); }.bind(this), this.playbackOrder || 'sequential', this.playOrderState);
+    }
+  } catch (e) {}
   if (!this.items.length) return -1;
   for (var i = 1; i <= this.items.length; i++) {
     var idx = (from + i) % this.items.length;
@@ -1234,7 +1254,22 @@ ZoneRenderer.prototype.allows = function (item) {
   } catch (e) { return true; }
 };
 
-ZoneRenderer.prototype.nextActive = function (list, from) {
+ZoneRenderer.prototype.setPlaybackOrder = function (mode) {
+  var m = mode || 'sequential';
+  if (m !== this.playbackOrder) this.orderState = {};
+  this.playbackOrder = m;
+  this.orderState = this.orderState || {};
+};
+
+ZoneRenderer.prototype.nextActive = function (list, from, zoneId) {
+  try {
+    if (typeof PlayOrder !== 'undefined') {
+      if (!this.orderState) this.orderState = {};
+      var key = zoneId || '_';
+      if (!this.orderState[key]) this.orderState[key] = {};
+      return PlayOrder.nextIndex(list, from - 1, function (it) { return this.allows(it); }.bind(this), this.playbackOrder || 'sequential', this.orderState[key]);
+    }
+  } catch (e) {}
   for (var i = 0; i < list.length; i++) {
     var idx = (from + i) % list.length;
     if (this.allows(list[idx])) return idx;
@@ -1269,7 +1304,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
   var self = this;
   // #74/#75: skip items whose schedule excludes them now; blank-idle the zone and
   // re-check shortly (a daypart may open) if none are active.
-  var activeIdx = this.nextActive(list, index);
+  var activeIdx = this.nextActive(list, index, zone && zone.id);
   if (activeIdx < 0) { this.scheduleAdvance(zone, 30000, function () { self.showItem(zone, list, 0); }); return; }
 
   var a = list[activeIdx];

@@ -18,6 +18,7 @@ const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-inge
 const htmlBundle = require('../lib/html-bundle');
 const { finalizeUpload, INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
 const { digestFile } = require('../lib/content-digest');
+const { normalizeTags, normalizeMeta, parseTags, parseMeta } = require('../lib/content-tags');
 const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
 
 // Multer captures file.originalname directly from the multipart filename header,
@@ -91,11 +92,16 @@ router.get('/', (req, res) => {
     }
   }
   if (q) {
-    // Leading-wildcard LIKE (no index) — fine for the library's scale. Escape the LIKE
-    // metacharacters so a filename with % or _ is matched literally.
     const esc = q.replace(/[\\%_]/g, (m) => '\\' + m);
-    sql += " AND filename LIKE ? ESCAPE '\\'";
-    params.push('%' + esc + '%');
+    const tagQ = q.replace(/^#/, '').replace(/^tag:/i, '').trim().toLowerCase();
+    if (q.startsWith('#') || /^tag:/i.test(q)) {
+      sql += " AND tags LIKE ? ESCAPE '\\'";
+      params.push('%"' + tagQ.replace(/[\\%_]/g, (m) => '\\' + m) + '"%');
+    } else {
+      sql += " AND (filename LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' OR meta LIKE ? ESCAPE '\\')";
+      const like = '%' + esc + '%';
+      params.push(like, like, like);
+    }
   }
   // #214: type filter. youtube (video/youtube) and web (any other remote_url) are split
   // out from plain uploaded video/image so the UI's four buckets map cleanly.
@@ -121,6 +127,10 @@ router.get('/', (req, res) => {
   sql += ' ORDER BY ' + (SORTS[req.query.sort] || SORTS.date_desc) + ' LIMIT ? OFFSET ?';
   params.push(Math.min(parseInt(req.query.limit) || 100, 500), parseInt(req.query.offset) || 0);
   const content = db.prepare(sql).all(...params);
+  for (const c of content) {
+    c.tags = parseTags(c.tags);
+    c.meta = parseMeta(c.meta);
+  }
   res.json(content);
 });
 
@@ -489,6 +499,8 @@ router.post('/batch/move', (req, res) => {
 router.get('/:id', (req, res) => {
   const content = checkContentRead(req, res);
   if (!content) return;
+  content.tags = parseTags(content.tags);
+  content.meta = parseMeta(content.meta);
   res.json(content);
 });
 
@@ -498,7 +510,7 @@ router.put('/:id', (req, res) => {
   if (!content) return;
 
   const { filename, mime_type, remote_url, folder, folder_id, expires_at, unstable_connection,
-          captions_enabled, captions_lang, subtitle_url, subtitle_lang } = req.body;
+          captions_enabled, captions_lang, subtitle_url, subtitle_lang, tags, meta } = req.body;
   const updates = [];
   const values = [];
   /*
@@ -517,6 +529,16 @@ router.put('/:id', (req, res) => {
     else { updates.push(`${col} = ?`); values.push(val); }
   };
   if (filename !== undefined) { updates.push('filename = ?'); values.push(safeFilename(filename)); }
+  if (tags !== undefined) {
+    const n = normalizeTags(tags);
+    if (n === false) return res.status(400).json({ error: 'tags must be an array of labels, or a comma-separated string' });
+    updates.push('tags = ?'); values.push(JSON.stringify(n));
+  }
+  if (meta !== undefined) {
+    const n = normalizeMeta(meta);
+    if (n === false) return res.status(400).json({ error: 'meta must be an object of key=value pairs' });
+    updates.push('meta = ?'); values.push(JSON.stringify(n));
+  }
   if (mime_type !== undefined) set('mime_type', mime_type);
   if (remote_url !== undefined) {
     if (remote_url) {

@@ -124,6 +124,7 @@ test('selection bulk route and playlist editor checkboxes exist', () => {
   // not raw prompts.
   assert.match(ui, /editConditionModal/);
   assert.match(ui, /getDataSources\(\)/);
+  assert.match(ui, /condType/);
 });
 
 test('players skip with itemShouldPlay and honour log_play / fit_mode', () => {

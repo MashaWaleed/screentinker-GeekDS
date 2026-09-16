@@ -36,6 +36,7 @@ const BROWSER_SHARED_MODULES = [
   ['shared/Transitions/params.js', 'TransitionParams'],
   ['shared/Transitions/renderer.js', 'TransitionRenderer'],
   ['server/lib/schedule-eval.js', 'ScheduleEval'],
+  ['server/lib/play-order.js', 'PlayOrder'],
   ['server/lib/player-media-health.js', 'PlayerMediaHealth'],
   ['server/lib/media-mute.js', 'MediaMute'],
   ['server/lib/orientation-style.js', 'OrientationStyle'],
