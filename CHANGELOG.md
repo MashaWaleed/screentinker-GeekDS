@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.1 (2026-09-16)
 
 ### Added
 
@@ -29,6 +29,19 @@ playing everything.
 
 The Outlook calendar **shows** those windows on a playlist event (peek + stacked labels). It does
 not write `schedules` rows for them. Open playlist from the peek to edit.
+
+### Fixed
+
+**Tablet room-sign panels can fill the screen.** Added 3:2 / 2:3 and 16:10 / 10:16 to the slide-deck
+aspect options. A panel like an 800x1200 ThinkSmart is exactly 2:3, so a 16:9 deck could never fill
+it: it letterboxed, and on a glossy panel the black bars reflect the room. Authoring the deck at
+3:2 (landscape) now fills such a panel exactly. The renderer already accepted any ratio; only the
+editor's picker and the deck whitelist were gating it.
+
+**`busy_timeout` on the database connection.** The main connection now waits up to 5s through a
+brief writer lock instead of failing a statement with "database is locked". better-sqlite3 defaulted
+this to 5s (so the native path never saw it); the node:sqlite fallback opened with none, so a boot
+migration contended by the WAL checkpointer could fail. Matches the native driver's behaviour.
 
 ## 2.1.0
 

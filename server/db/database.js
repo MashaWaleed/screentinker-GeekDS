@@ -12,6 +12,12 @@ if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
 const db = new Database(config.dbPath);
 
+// Wait through a brief writer lock instead of failing the statement outright. better-sqlite3
+// defaults this to 5000ms, which is why the native path never saw "database is locked"; the
+// node:sqlite fallback opens with no busy timeout (default 0), so a write contended by the WAL
+// checkpointer worker or a concurrent boot-migration step failed immediately. Match better-sqlite3.
+db.pragma('busy_timeout = 5000');
+
 // Enable WAL mode and foreign keys
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
