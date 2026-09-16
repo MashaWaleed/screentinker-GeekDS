@@ -161,7 +161,7 @@ PlaylistPlayer.prototype.load = function (assignments) {
       // widget_rev for the same reason as schedules and transition above: a widget's IDENTITY
       // is unchanged when it is EDITED, so a content edit produced an identical signature, the
       // update was treated as unchanged, and the screen kept the old render until a restart.
-      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.transition || null];
+      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.transition || null];
   }));
   if (sig === this.sig && this.items.length) {
     // In-place duration refresh: patch duration_sec on the live items so a duration edit takes effect
@@ -355,16 +355,16 @@ PlaylistPlayer.prototype.gotoIndex = function (idx) {
 };
 
 PlaylistPlayer.prototype.scheduleAllows = function (item) {
-  if (!item || !item.schedules || !item.schedules.length) return true;
   try {
     return (typeof ScheduleEval !== 'undefined')
-      ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), this.timezone) : true;
+      ? ScheduleEval.itemShouldPlay(item, Date.now(), this.timezone) : true;
   } catch (e) { return true; }
 };
 
 PlaylistPlayer.prototype.anyScheduled = function () {
   for (var i = 0; i < this.items.length; i++) {
-    if (this.items[i].schedules && this.items[i].schedules.length) return true;
+    var it = this.items[i];
+    if ((it.schedules && it.schedules.length) || it.play_from || it.play_until || it.play_when) return true;
   }
   return false;
 };
@@ -407,6 +407,7 @@ PlaylistPlayer.prototype.nothingScheduled = function () {
 // row's duration closes. Mirrors server/player/index.html and the Android WebSocketService.
 PlaylistPlayer.prototype._logPlay = function (event, item, completed) {
   if (typeof this.onPlayEvent !== 'function' || !item) return;
+  if (item.log_play === 0) return;
   var cid = item.content_id || item.widget_id || '';
   var payload = {
     device_id: this.getDeviceId(),
@@ -1161,7 +1162,7 @@ ZoneRenderer.prototype.signature = function (layout, assignments) {
     return [z.id, z.x_percent, z.y_percent, z.width_percent, z.height_percent, z.z_index, z.fit_mode, z.background_color];
   });
   var asig = (assignments || []).map(function (a) {
-    return [a.zone_id || '', a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.sort_order, a.schedules || []];
+    return [a.zone_id || '', a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.sort_order, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null];
   });
   return JSON.stringify([layout.id || '', zsig, asig]);
 };
@@ -1227,10 +1228,9 @@ ZoneRenderer.prototype.scheduleAdvance = function (zone, ms, fn) {
 // Per-item schedule gating, mirrors PlaylistPlayer / Android. No blocks = always on;
 // fails open (any evaluator error means the item plays).
 ZoneRenderer.prototype.allows = function (item) {
-  if (!item || !item.schedules || !item.schedules.length) return true;
   try {
     return (typeof ScheduleEval !== 'undefined')
-      ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), this.timezone) : true;
+      ? ScheduleEval.itemShouldPlay(item, Date.now(), this.timezone) : true;
   } catch (e) { return true; }
 };
 
@@ -1274,7 +1274,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
 
   var a = list[activeIdx];
   // Scheduled zones cycle even with one active item so windows re-evaluate.
-  var multi = list.length > 1 || list.some(function (x) { return x.schedules && x.schedules.length; });
+  var multi = list.length > 1 || list.some(function (x) { return (x.schedules && x.schedules.length) || x.play_from || x.play_until; });
   var advance = function () { self.showItem(zone, list, activeIdx + 1); };
   var dur = this.durationMs(a);
   var mime = a.mime_type || '';
@@ -1301,7 +1301,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime.indexOf('video/') === 0) {
       var v = document.createElement('video');
-      v.className = zrFitClass(zone.fit);
+      v.className = zrFitClass(a.fit_mode || zone.fit);
       // Zone videos are muted: TV web autoplay needs muted, and overlapping zone audio
       // is rarely intended. (Single-zone fullscreen handles audio in PlaylistPlayer.)
       v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
@@ -1318,7 +1318,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       }
     } else if (mime.indexOf('image/') === 0) {
       var img = document.createElement('img');
-      img.className = zrFitClass(zone.fit);
+      img.className = zrFitClass(a.fit_mode || zone.fit);
       img.onerror = function () { if (multi) self.scheduleAdvance(zone, 2000, advance); };
       img.src = this.contentUrl(a);
       zone.el.appendChild(img);

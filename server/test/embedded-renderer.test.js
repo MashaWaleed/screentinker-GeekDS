@@ -38,7 +38,9 @@ db.exec(`
   CREATE TABLE playlist_items (
     id TEXT PRIMARY KEY, playlist_id TEXT, content_id TEXT,
     sort_order INTEGER DEFAULT 0, duration_sec INTEGER DEFAULT 30, updated_at INTEGER DEFAULT 0,
-    zone_id TEXT, widget_id TEXT, child_playlist_id TEXT, muted INTEGER DEFAULT 0
+    zone_id TEXT, widget_id TEXT, child_playlist_id TEXT, muted INTEGER DEFAULT 0,
+    play_from TEXT, play_until TEXT, enabled INTEGER DEFAULT 1, log_play INTEGER DEFAULT 1,
+    fit_mode TEXT, play_when TEXT
   );
   CREATE TABLE playlist_item_schedules (
     id TEXT PRIMARY KEY, playlist_item_id TEXT, active_days TEXT,

@@ -67,11 +67,14 @@ function scheduleBlocksFor(db, itemId) {
 }
 
 function capturePlaylist(db, row) {
-  const items = db.prepare(`SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted
+  const items = db.prepare(`SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when
                               FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC, id ASC`).all(row.id)
     .map((it) => ({
       content_id: it.content_id || null, widget_id: it.widget_id || null, child_playlist_id: it.child_playlist_id || null,
       zone_id: it.zone_id || null, sort_order: it.sort_order, duration_sec: it.duration_sec, muted: it.muted ? 1 : 0,
+      play_from: it.play_from || null, play_until: it.play_until || null,
+      enabled: it.enabled === 0 ? 0 : 1, log_play: it.log_play === 0 ? 0 : 1,
+      fit_mode: it.fit_mode || null, play_when: it.play_when || null,
       schedules: scheduleBlocksFor(db, it.id),
     }));
   return { name: row.name, description: row.description || '', items };
@@ -422,10 +425,10 @@ function restoreToDraft(db, { type, id, revisionId, actor }) {
   } else if (type === 'playlist') {
     const txn = db.transaction(() => {
       db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(id);
-      const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
       for (const it of state.items || []) {
         try {
-          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0);
+          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null);
           for (const b of it.schedules || []) {
             const cols = Object.keys(b);
             if (!cols.length) continue;

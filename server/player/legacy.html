@@ -3612,7 +3612,7 @@ function handlePlaylistUpdate(data) {
     return;
   }
   const newItems = data.assignments || [];
-  const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|").concat(a.widget_rev || "", "|").concat(a.zone_id || "", "|").concat(a.remote_url || "", "|").concat(a.filepath || "", "|").concat(a.filename || "", "|").concat(JSON.stringify(a.schedules || []), "|").concat(JSON.stringify(a.transition || null))).join(",");
+  const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|").concat(a.widget_rev || "", "|").concat(a.zone_id || "", "|").concat(a.remote_url || "", "|").concat(a.filepath || "", "|").concat(a.filename || "", "|").concat(JSON.stringify(a.schedules || []), "|").concat(a.play_from || "", "|").concat(a.play_until || "", "|").concat(a.enabled === 0 ? 0 : 1, "|").concat(a.log_play === 0 ? 0 : 1, "|").concat(a.fit_mode || "", "|").concat(JSON.stringify(a.play_when || null), "|").concat(JSON.stringify(a.transition || null))).join(",");
   const newFp = fingerprint(newItems);
   const oldFp = fingerprint(playlist);
   const effectiveOrientation = window.WallGeometry ? window.WallGeometry.orientationForWallMember(data.orientation, (_a = data.wall_config) == null ? void 0 : _a.rotation) : data.orientation;
@@ -3818,12 +3818,18 @@ function handlePlaylistUpdate(data) {
   startPlaybackAt(nextIdx);
 }
 function scheduleAllows(item) {
-  if (!item || !item.schedules || !item.schedules.length) return true;
   try {
-    return window.ScheduleEval ? ScheduleEval.isItemActiveNow(item.schedules, Date.now(), playerTimezone) : true;
+    return window.ScheduleEval ? ScheduleEval.itemShouldPlay(item, Date.now(), playerTimezone) : true;
   } catch (e) {
     return true;
   }
+}
+function itemFit(item, zone) {
+  const m = item && item.fit_mode || zone && zone.fit_mode || "contain";
+  return m === "cover" || m === "fill" || m === "contain" ? m : "contain";
+}
+function shouldLogPlay(item) {
+  return !item || item.log_play !== 0;
 }
 function nextActiveIndex(from) {
   if (!playlist.length) return -1;
@@ -3880,7 +3886,7 @@ function playCurrentItem() {
   console.log("Playing:", item.filename, "(".concat(currentIndex + 1, "/").concat(playlist.length, ")"));
   currentItemStartedAt = Date.now();
   applySlideAudio(item);
-  if (!PREVIEW_MODE && !(socket == null ? void 0 : socket.connected) && (!wallConfig || wallConfig.is_leader)) {
+  if (!PREVIEW_MODE && !(socket == null ? void 0 : socket.connected) && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
     offlinePlayOpen = {
       content_id: item.content_id || null,
       widget_id: item.widget_id || null,
@@ -3888,7 +3894,7 @@ function playCurrentItem() {
       started_at: Math.floor(Date.now() / 1e3)
     };
   }
-  if ((socket == null ? void 0 : socket.connected) && (!wallConfig || wallConfig.is_leader)) {
+  if ((socket == null ? void 0 : socket.connected) && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
     socket.emit("device:play-event", {
       device_id: config.deviceId,
       event: "play_start",
@@ -4848,7 +4854,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   }
   index = activeIdx;
   const a = items[index % items.length];
-  const multi = items.length > 1 || items.some((it) => it.schedules && it.schedules.length);
+  const multi = items.length > 1 || items.some((it) => it.schedules && it.schedules.length || it.play_from || it.play_until || it.play_when);
   const advance = () => showZoneItem(zone, div, items, index + 1, timers);
   div.querySelectorAll("video").forEach((v) => {
     try {
@@ -4882,7 +4888,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     video.muted = div.__stOverlay ? false : zone.sort_order > 0;
     video.loop = !multi;
     video.playsInline = true;
-    video.style.cssText = "width:100%;height:100%;object-fit:".concat(zone.fit_mode || "cover");
+    video.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));
     if (multi) {
       video.onended = advance;
       video.onerror = advance;
@@ -4916,7 +4922,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   } else {
     const img = document.createElement("img");
     img.src = src;
-    img.style.cssText = "width:100%;height:100%;object-fit:".concat(zone.fit_mode || "cover");
+    img.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));
     div.appendChild(img);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   }

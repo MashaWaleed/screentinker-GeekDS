@@ -523,12 +523,42 @@ export async function render(container) {
   // ---------------------------------------------------------------- data
   const visibleEvents = () => allEvents.filter((ev) => visibleKeys.has(targetOf(ev).key));
 
+  // Playlist item windows are a READ of playlist_items.play_from/play_until (and daypart
+  // blocks). They never become `schedules` rows. Cached per playlist id for this view.
+  const playlistItemsById = new Map();
+  async function hydratePlaylistItems(events) {
+    const ids = [...new Set((events || []).map((e) => e.playlist_id).filter(Boolean))];
+    playlistItemsById.clear();
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const p = await api.getPlaylist(id);
+        playlistItemsById.set(id, p.items || []);
+      } catch {
+        playlistItemsById.set(id, []);
+      }
+    }));
+  }
+  function itemsOf(ev) {
+    return ev && ev.playlist_id ? (playlistItemsById.get(ev.playlist_id) || []) : [];
+  }
+  function itemWindowLabel(it) {
+    if (it.play_from || it.play_until) return `${it.play_from || '…'} → ${it.play_until || '…'}`;
+    if (it.schedules && it.schedules.length) return scheduleSummaryForCal(it.schedules);
+    return t('schedule.peek_item_always');
+  }
+  function scheduleSummaryForCal(schedules) {
+    if (!schedules || !schedules.length) return '';
+    const b = schedules[0];
+    const days = Array.isArray(b.days) ? b.days : [];
+    return `${days.length === 7 ? t('itemsched.every_day') : (b.start || '') + '–' + (b.end || '')}`
+      + (schedules.length > 1 ? ` +${schedules.length - 1}` : '');
+  }
+
   async function loadCalendar() {
     period = periodRange(effectiveView(), anchor);
     renderToolbar();
-    // One request per period: all=1 (the server scopes to the caller's workspace) over exactly the
-    // window this view draws. The rail filters client-side, so switching calendars never refetches.
     allEvents = await API(`/schedules/week?date=${ymd(period.fetchStart)}&all=1&days=${period.fetchDays}`);
+    await hydratePlaylistItems(allEvents);
     renderRailMini();
     renderCalList();
     draw();
@@ -628,7 +658,11 @@ export async function render(container) {
         block.style.borderLeftColor = ev.color || 'rgba(0,0,0,.25)';
         const target = targetOf(ev);
         if (durationPx >= 34) {
-          block.innerHTML = `<div class="who">${esc(target.name)}</div><div class="what">${esc(labelOf(ev))}</div>`;
+          const extras = itemsOf(ev).filter((it) => it.play_from || it.play_until || (it.schedules && it.schedules.length)).slice(0, 3);
+          const extraHtml = (extras.length && durationPx >= 56)
+            ? extras.map((it) => `<div class="what" style="opacity:.85">${esc(it.filename || it.widget_name || 'item')} · ${esc(itemWindowLabel(it))}</div>`).join('')
+            : '';
+          block.innerHTML = `<div class="who">${esc(target.name)}</div><div class="what">${esc(labelOf(ev))}</div>${extraHtml}`;
         } else {
           block.textContent = `${target.name} · ${labelOf(ev)}`;
         }
@@ -828,6 +862,10 @@ export async function render(container) {
     const s = evStart(ev), e = evEnd(ev);
     const what = [ev.playlist_name && `${t('schedule.playlist_override')}: ${ev.playlist_name}`, ev.layout_id && `${t('schedule.layout_override')}: ${(layouts.find((l) => l.id === ev.layout_id) || {}).name || ''}`, ev.content_name && `${t('schedule.content_label')}: ${ev.content_name}`].filter(Boolean);
     const until = ev.recurrence_end ? new Date(String(ev.recurrence_end).slice(0, 10) + 'T00:00:00') : null;
+    const items = itemsOf(ev);
+    const itemRows = items.length
+      ? `<div class="meta" style="margin-top:8px"><strong>${esc(t('schedule.peek_items'))}</strong><ul style="margin:6px 0 0 16px;padding:0">${items.slice(0, 12).map((it) => `<li>${esc(it.filename || it.widget_name || it.child_playlist_name || 'item')} · ${esc(itemWindowLabel(it))}</li>`).join('')}${items.length > 12 ? `<li>…</li>` : ''}</ul></div>`
+      : '';
     const pop = openPopover(`
       <h3><span class="sw" style="background:${colorOf(ev)}"></span>${esc(labelOf(ev))}</h3>
       <div class="meta">
@@ -836,8 +874,10 @@ export async function render(container) {
         ${what.map((w) => esc(w) + '<br>').join('')}
         ${esc(recurrenceSentence(ev.recurrence, { startMin: minsOf(new Date(ev.start_time)), endMin: minsOf(new Date(ev.end_time)), until, startDate: new Date(ev.start_time) }))}
       </div>
+      ${itemRows}
       <div class="sched-pop-actions">
         <button type="button" class="btn btn-danger btn-sm left" data-act="delete">${t('schedule.peek_delete')}</button>
+        ${ev.playlist_id ? `<button type="button" class="btn btn-secondary btn-sm" data-act="playlist">${t('schedule.peek_open_playlist')}</button>` : ''}
         <button type="button" class="btn btn-secondary btn-sm" data-act="close">${t('schedule.peek_close')}</button>
         <button type="button" class="btn btn-primary btn-sm" data-act="edit">${t('schedule.peek_edit')}</button>
       </div>`, anchorEl.getBoundingClientRect());
@@ -846,6 +886,7 @@ export async function render(container) {
       if (b.dataset.act === 'close') closePopovers();
       else if (b.dataset.act === 'edit') { closePopovers(); editSchedule(ev); }
       else if (b.dataset.act === 'delete') { closePopovers(); deleteSchedule(ev); }
+      else if (b.dataset.act === 'playlist') { closePopovers(); window.location.hash = `#/playlists/${ev.playlist_id}`; }
     };
   }
 

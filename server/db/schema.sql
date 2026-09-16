@@ -414,6 +414,18 @@ CREATE TABLE IF NOT EXISTS playlist_items (
     sort_order      INTEGER NOT NULL DEFAULT 0,
     duration_sec    INTEGER NOT NULL DEFAULT 10,
     muted           INTEGER NOT NULL DEFAULT 0,
+    -- Inclusive local wall-clock interval (YYYY-MM-DDTHH:MM). Null on a side = unbounded.
+    -- Evaluated on the device with the daypart blocks (AND). Empty = always in the loop.
+    play_from       TEXT,
+    play_until      TEXT,
+    -- 0 = skip (deactivate). Dropped from published_snapshot so old players skip too.
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    -- 0 = do not write proof-of-play. Default 1. Additive; old players keep logging.
+    log_play        INTEGER NOT NULL DEFAULT 1,
+    -- contain | cover | fill. Null = inherit the zone's fit_mode.
+    fit_mode        TEXT,
+    -- JSON { slug, path, op, value } — skip unless the named data source matches. Fail open.
+    play_when       TEXT,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );

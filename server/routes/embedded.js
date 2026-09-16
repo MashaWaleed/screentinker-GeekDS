@@ -193,7 +193,7 @@ function resolveDeviceTimezone(device) {
 
 function getPublishedPlaylistItems(playlistId) {
   if (!playlistId) return [];
-  const playlist = db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(playlistId);
+  const playlist = db.prepare('SELECT published_snapshot, workspace_id FROM playlists WHERE id = ?').get(playlistId);
   if (!playlist?.published_snapshot) return [];
   let items = [];
   try {
@@ -241,6 +241,23 @@ function getPublishedPlaylistItems(playlistId) {
       } catch (_) {}
     }
   }
+  // Same bag the live player gets, so play_when can skip on e-ink too.
+  try {
+    const slugs = new Set();
+    for (const it of items) { const s = it && it.play_when && it.play_when.slug; if (s) slugs.add(s); }
+    if (slugs.size && playlist.workspace_id) {
+      const stmt = db.prepare('SELECT cached_data FROM data_sources WHERE workspace_id = ? AND slug = ?');
+      const bag = {};
+      for (const slug of slugs) {
+        const row = stmt.get(playlist.workspace_id, slug);
+        try { bag[slug] = JSON.parse(row?.cached_data || 'null'); } catch { bag[slug] = null; }
+      }
+      for (const it of items) {
+        const slug = it && it.play_when && it.play_when.slug;
+        if (slug) it._ds = bag[slug];
+      }
+    }
+  } catch (_) {}
   return items;
 }
 
@@ -261,7 +278,7 @@ function resolveCurrentItem(deviceId, forceIndex) {
   const tz = resolveDeviceTimezone(device);
 
   const allItems = getPublishedPlaylistItems(playlist_id);
-  const items = allItems.filter((it) => ScheduleEval.isItemActiveNow(it.schedules, Date.now(), tz));
+  const items = allItems.filter((it) => ScheduleEval.itemShouldPlay(it, Date.now(), tz));
   if (!items.length) return null;
 
   const now = Math.floor(Date.now() / 1000);
@@ -341,7 +358,7 @@ function resolveLayoutItems(deviceId, forceIndex, { advance = true } = {}) {
   if (playlist_id) {
     const device = db.prepare('SELECT id, workspace_id, timezone, reported_timezone FROM devices WHERE id = ?').get(deviceId);
     const tz = resolveDeviceTimezone(device);
-    allItems = getPublishedPlaylistItems(playlist_id).filter((it) => ScheduleEval.isItemActiveNow(it.schedules, Date.now(), tz));
+    allItems = getPublishedPlaylistItems(playlist_id).filter((it) => ScheduleEval.itemShouldPlay(it, Date.now(), tz));
   }
 
   // If the device has no items in its assigned playlist, return null so caller returns 404

@@ -28,7 +28,8 @@ function freshDb() {
       published_snapshot TEXT, published_structure TEXT, is_auto_generated INTEGER);
     CREATE TABLE playlist_items (id INTEGER PRIMARY KEY AUTOINCREMENT, playlist_id TEXT,
       content_id TEXT, widget_id TEXT, sort_order INTEGER, duration_sec INTEGER,
-      created_at INTEGER, updated_at INTEGER, zone_id TEXT, muted INTEGER, child_playlist_id TEXT);
+      created_at INTEGER, updated_at INTEGER, zone_id TEXT, muted INTEGER, child_playlist_id TEXT,
+      play_from TEXT, play_until TEXT);
     CREATE TABLE widgets (id TEXT PRIMARY KEY, user_id TEXT, team_id TEXT, widget_type TEXT NOT NULL,
       name TEXT NOT NULL, config TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL, workspace_id TEXT);

@@ -689,6 +689,30 @@ function customShaderSources(workspaceId, items) {
   } catch (e) { return null; }
 }
 
+// Attach the cached data-source blob an item's play_when named, so the player can skip without
+// a second round trip. Fail-open on the player if this is missing.
+function attachDataSourceBag(items, workspaceId) {
+  if (!workspaceId || !Array.isArray(items)) return;
+  const slugs = new Set();
+  for (const it of items) {
+    const slug = it && it.play_when && it.play_when.slug;
+    if (slug) slugs.add(slug);
+  }
+  if (!slugs.size) return;
+  const bag = {};
+  try {
+    const stmt = db.prepare('SELECT cached_data FROM data_sources WHERE workspace_id = ? AND slug = ?');
+    for (const slug of slugs) {
+      const row = stmt.get(workspaceId, slug);
+      try { bag[slug] = JSON.parse(row?.cached_data || 'null'); } catch { bag[slug] = null; }
+    }
+  } catch (e) { return; }
+  for (const it of items) {
+    const slug = it && it.play_when && it.play_when.slug;
+    if (slug) it._ds = bag[slug];
+  }
+}
+
 function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config }) {
   let a = Array.isArray(assignments) ? assignments : [];
   // Transition widgets are normalized OUT here (the single device+preview chokepoint): each is dropped
@@ -697,6 +721,7 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
   // #320: the workspace's own uploaded shaders, consulted after the shipped manifest. Built here
   // rather than inside the resolver so the lookup stays a pure function of what it is given.
   a = normalizeTransitions(a, customShaderRegistry(workspace_id));
+  attachDataSourceBag(a, workspace_id);
   const zoneCount = layout?.zones?.length || 0;
   if (zoneCount < 2) a = a.map(x => (x && x.zone_id != null ? { ...x, zone_id: null } : x));
   return {
