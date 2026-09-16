@@ -14,10 +14,9 @@ Deactivated items are dropped from the published snapshot, so a BrightSign still
 an old player skips them too. Fit and "don't log" are additive: old players inherit
 the zone and keep logging. The data-source condition fails open if the bag is missing.
 
-The data-source "skip unless a field matches" condition is evaluated on the web player,
-Tizen, and the embedded/e-ink renderer (and therefore BrightSign / webOS, which run the
-web player). The native Android app does not yet evaluate it and plays the item
-regardless (fail open) — the from/to window and daypart ARE honoured on Android.
+The data-source "skip unless a field matches" condition is evaluated on every player — web,
+native Android, Tizen, the embedded/e-ink renderer, and BrightSign / webOS (which run the web
+player) — from the same `_ds` value bag, and fails open when the bag is missing.
 
 **From / to on a playlist item, next to duration.** Duration is still how long the file stays on
 screen when it plays. The new fields are an eligibility window: if the screen's local now is

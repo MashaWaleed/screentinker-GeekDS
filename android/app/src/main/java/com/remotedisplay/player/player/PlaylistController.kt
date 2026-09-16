@@ -31,9 +31,12 @@ data class PlaylistItem(
     // Inclusive local play window (YYYY-MM-DDTHH:MM). Null = unbounded on that side.
     val playFrom: String? = null,
     val playUntil: String? = null,
-    val enabled: Boolean = true,
     val logPlay: Boolean = true,
     val fitMode: String? = null,
+    // Data-source "skip unless a field matches" condition + the resolved value bag (_ds) the server
+    // attached for its slug. Fails open when the bag is missing. See ScheduleEval.conditionOk.
+    val playWhen: ScheduleEval.Condition? = null,
+    val dataBag: JSONObject? = null,
     /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
@@ -236,9 +239,10 @@ class PlaylistController(
                     schedules = parseSchedules(obj.optJSONArray("schedules")),
                     playFrom = if (obj.isNull("play_from")) null else obj.optString("play_from", "").ifEmpty { null },
                     playUntil = if (obj.isNull("play_until")) null else obj.optString("play_until", "").ifEmpty { null },
-                    enabled = obj.optInt("enabled", 1) != 0,
                     logPlay = obj.optInt("log_play", 1) != 0,
                     fitMode = if (obj.isNull("fit_mode")) null else obj.optString("fit_mode", "").ifEmpty { null },
+                    playWhen = ScheduleEval.parseCondition(obj.optJSONObject("play_when")),
+                    dataBag = obj.optJSONObject("_ds"),
                     transition = Transitions.parse(obj.optJSONObject("transition")),
                     slideAudio = parseSlideAudio(obj.optJSONObject("audio"))
                 )
@@ -266,7 +270,8 @@ class PlaylistController(
         fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + it.widgetRev + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
-            } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "")
+            } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
+            "|" + (it.playWhen?.let { c -> c.path + c.op + (c.value ?: "") } ?: "")
         val oldContentIds = items.map(::sig)
         val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds
@@ -603,12 +608,16 @@ class PlaylistController(
     private fun scheduleAllows(item: PlaylistItem): Boolean =
         try {
             if (!item.enabled) false
-            else ScheduleEval.isItemActiveNow(
-                item.schedules,
-                System.currentTimeMillis(),
-                effectiveTimezone,
-                ScheduleEval.windowOf(item.playFrom, item.playUntil)
-            )
+            else if (!ScheduleEval.isItemActiveNow(
+                    item.schedules,
+                    System.currentTimeMillis(),
+                    effectiveTimezone,
+                    ScheduleEval.windowOf(item.playFrom, item.playUntil)
+                )) false
+            // Data-source condition, evaluated on the same _ds bag the web/Tizen/e-ink players use.
+            // Fails open on a missing bag (see ScheduleEval.conditionOk), so this can only ever
+            // REMOVE an item the window already allowed, never blank a screen on missing data.
+            else ScheduleEval.conditionOk(item.playWhen, item.dataBag)
         } catch (e: Throwable) { true }
 
     // #group-sync schedule engine. Lay the deterministic playlist (each active item occupies a

@@ -47,6 +47,10 @@ test('Android native player carries playFrom/playUntil into ScheduleEval', () =>
   assert.match(ctrl, /ScheduleEval\.windowOf\(item\.playFrom/);
   assert.match(zones, /play_from/);
   assert.match(evalKt, /data class Window/);
+  // Native Android now also evaluates the data-source condition (parity with web/Tizen/e-ink).
+  assert.match(evalKt, /fun conditionOk/, 'Android ScheduleEval must evaluate play_when');
+  assert.match(ctrl, /ScheduleEval\.conditionOk\(item\.playWhen/, 'Android scheduleAllows must apply the condition');
+  assert.match(ctrl, /obj\.optJSONObject\("_ds"\)/, 'Android must parse the _ds data bag');
 });
 
 test('calendar peeks playlist items and does not write schedules rows for them', () => {

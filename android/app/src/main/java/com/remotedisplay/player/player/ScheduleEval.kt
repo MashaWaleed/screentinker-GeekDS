@@ -1,5 +1,6 @@
 package com.remotedisplay.player.player
 
+import org.json.JSONObject
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -43,6 +44,79 @@ object ScheduleEval {
         val playFrom: String?,     // "YYYY-MM-DDTHH:MM" or null
         val playUntil: String?
     )
+
+    /**
+     * A per-item data-source condition ("skip unless a field matches"). Kotlin port of
+     * conditionOk/getPath in server/lib/schedule-eval.js. The item carries `_ds` = the resolved
+     * value bag for this condition's slug (the server already did bag[slug]); `path` traverses into
+     * it. `op` is one of eq/neq/gt/gte/lt/lte/truthy. Value is compared as string (eq/neq) or number.
+     */
+    data class Condition(val path: String, val op: String, val value: String?)
+
+    /** Parse the item's `play_when` object; null when absent or malformed (no path). */
+    fun parseCondition(o: JSONObject?): Condition? {
+        if (o == null) return null
+        val path = o.optString("path", "")
+        if (path.isEmpty()) return null
+        val op = o.optString("op", "eq").ifEmpty { "eq" }
+        val value = if (o.isNull("value")) null else o.optString("value", "")
+        return Condition(path, op, value)
+    }
+
+    /**
+     * FAILS OPEN: a null condition, or a missing/unloaded data bag, plays the item — including for
+     * `truthy` (the guard runs before every operator, matching the fixed JS). Non-numeric operands
+     * on a numeric comparison also fail open.
+     */
+    fun conditionOk(cond: Condition?, data: JSONObject?): Boolean {
+        if (cond == null) return true
+        if (data == null) return true
+        val lhs = getPath(data, cond.path)
+        when (cond.op) {
+            "truthy" -> return truthy(lhs)
+            "eq" -> return jstr(lhs) == jstr(cond.value)
+            "neq" -> return jstr(lhs) != jstr(cond.value)
+        }
+        val ln = jnum(lhs); val rn = jnum(cond.value)
+        if (ln == null || rn == null) return true
+        return when (cond.op) {
+            "gt" -> ln > rn; "gte" -> ln >= rn; "lt" -> ln < rn; "lte" -> ln <= rn
+            else -> true
+        }
+    }
+
+    private fun getPath(obj: JSONObject?, path: String?): Any? {
+        if (obj == null) return null
+        var cur: Any? = obj
+        for (part in (path ?: "").split(".")) {
+            if (part.isEmpty()) continue
+            val c = cur
+            if (c !is JSONObject || !c.has(part) || c.isNull(part)) return null
+            cur = c.opt(part)
+        }
+        return cur
+    }
+
+    // String(x) parity: missing/undefined -> "undefined" (as JS String(undefined)); else toString.
+    private fun jstr(x: Any?): String = if (x == null) "undefined" else x.toString()
+
+    // Number(x) parity enough for comparisons: numbers as-is, "" -> 0, non-numeric -> null (fail open).
+    private fun jnum(x: Any?): Double? = when (x) {
+        null -> null
+        is Number -> x.toDouble()
+        is Boolean -> if (x) 1.0 else 0.0
+        is String -> if (x.isBlank()) 0.0 else x.toDoubleOrNull()
+        else -> null
+    }
+
+    // !!x parity: JS-falsy values are undefined/null/false/0/""/NaN.
+    private fun truthy(x: Any?): Boolean = when (x) {
+        null -> false
+        is Boolean -> x
+        is Number -> x.toDouble() != 0.0 && !x.toDouble().isNaN()
+        is String -> x.isNotEmpty()
+        else -> true
+    }
 
     private val STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
     private val STAMP_RE = Regex("""^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$""")
