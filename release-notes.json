@@ -14,6 +14,15 @@
   ],
   "releases": [
     {
+      "version": "2.1.1",
+      "date": "2026-09-16",
+      "notes": [
+        "Playlist items can now have a start/end time window and days-and-hours, so an item only appears in that time range. Empty means it always plays, and it is checked on the screen so it works offline.",
+        "New checkbox multi-select on a playlist: shift-click a range or Select all, then copy, cut, paste, duplicate, delete, or bulk-edit duration, timing, and more.",
+        "New tablet screen shapes (3:2, 2:3, 16:10, 10:16). A room-sign slide can now fill tablet panels such as the Lenovo ThinkSmart exactly, instead of showing black bars."
+      ]
+    },
+    {
       "version": "2.1.0",
       "date": "2026-09-15",
       "notes": [
