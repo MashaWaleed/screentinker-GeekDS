@@ -2043,6 +2043,10 @@ async function aiGenerate(container) {
 const ASPECT_CHOICES = [
   ['16:9', 'Landscape 16:9'], ['9:16', 'Portrait 9:16'],
   ['4:3', 'Landscape 4:3'], ['3:4', 'Portrait 3:4'],
+  // Tablet room-signs are commonly 3:2 / 2:3 (e.g. a 800x1200 ThinkSmart panel is exactly 2:3) or
+  // 16:10 / 10:16. Without these a 16:9 deck can never fill such a panel — it always letterboxes.
+  ['3:2', 'Landscape 3:2 (tablet)'], ['2:3', 'Portrait 2:3 (tablet)'],
+  ['16:10', 'Landscape 16:10'], ['10:16', 'Portrait 10:16'],
   ['1:1', 'Square'], ['21:9', 'Ultrawide 21:9'],
   ['5:3', 'E-Paper 5:3'],
 ];
