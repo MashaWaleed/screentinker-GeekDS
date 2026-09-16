@@ -8,7 +8,8 @@
   <a href="https://screentinker.com">Live demo</a> ·
   <a href="https://screentinker.com/docs">API reference</a> ·
   <a href="https://screentinker.com/guides/self-hosted-digital-signage.html">Self-hosting guide</a> ·
-  <a href="https://discord.gg/utTdsrqq4Z">Discord</a>
+  <a href="https://discord.gg/utTdsrqq4Z">Discord</a> ·
+  <a href="https://youtu.be/FW8eVv8GHAw">What's new in 2.1 (video)</a>
 </p>
 
 ScreenTinker is a free, open-source **digital signage CMS** you can self-host on your own server — or run in our managed cloud. Manage TVs, video walls, and kiosks across multiple locations from one dashboard, with remote control, scheduling, playlists, and analytics. Built for retail, QSR menu boards, offices, lobbies, education, and any environment where you need centralized control over remote screens. Multi-tenant, MIT-licensed, single-developer maintained with direct contact access.
@@ -20,10 +21,12 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 **Hosted version:** [screentinker.com](https://screentinker.com) — free tier available, no credit card required.
 **Guides:** [What is digital signage?](https://screentinker.com/guides/what-is-digital-signage.html) · [Open-source digital signage](https://screentinker.com/guides/open-source-digital-signage.html) · [Self-hosting guide](https://screentinker.com/guides/self-hosted-digital-signage.html)
 **Community:** [Discord](https://discord.gg/utTdsrqq4Z)
+**What's new in 2.1:** [watch the release video](https://youtu.be/FW8eVv8GHAw) — every scene in it is a real ScreenTinker slide, played on a real ScreenTinker screen.
 
 ## Features
 
 - **Playlists** — first-class playlist objects: create, reorder, set per-item duration, share one playlist across multiple displays; draft/publish workflow with revert-to-published
+- **Slides** — a built-in slide editor: build decks of slides with templates, fields, and per-element entrance animations, an optional voiceover per slide and a music bed across the deck, then publish a deck straight to a playlist. (The 2.1 launch [video](https://youtu.be/FW8eVv8GHAw) is itself a ScreenTinker deck.)
 - **Device groups** — organize displays into groups, assign a playlist to an entire group, send bulk commands (reboot, screen on/off, launch, update, shutdown), schedule content group-wide
 - **Multi-zone layouts** — split screens into zones with drag-and-drop editor; 7 built-in templates (fullscreen, split, L-bar, PiP, grid)
 - **Video walls** — combine multiple displays into one screen with bezel compensation, device rotation, and leader-based sync
@@ -31,6 +34,8 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 - **Live video & Talk** — optional WebRTC path via a [go2rtc](https://github.com/AlexxIT/go2rtc) sidecar: sub-second live video of what a screen is actually playing (one screen watched by many dashboards without re-encoding), plus **Talk** — one-way announce or two-way intercom to a single screen, and one-way PA broadcast to a whole group or workspace, with an optional operator webcam shown fullscreen. Off by default and enabled per organization; an org can bring its own TURN/STUN. See [`docs/live-video.md`](docs/live-video.md)
 - **Scheduling** — visual weekly calendar with recurrence rules (daily/weekly/monthly), priority-based conflict resolution, both device-level and group-level schedules (device-level overrides win over group-level), timezone support
 - **Widgets** — clocks, weather, RSS tickers, text/HTML, webpages, social feeds, and Directory Board (scrolling lobby tenant/room/staff directories with dark/light themes, category management, and anti-burn-in motion)
+- **Data sources** — bind live external data into a slide or widget with `{{ds:slug.field}}`: an iCal/Webcal calendar or any JSON-over-HTTP feed, refreshed on its own schedule. Secret fields in a source's config are encrypted at rest
+- **Meeting-room signs** — point a slide at a room's calendar to show Busy / Available, what's on now, and when the room frees up — in every dashboard language, defaulting to English
 - **Kiosk mode** — interactive touchscreen interfaces
 - **Proof-of-play** — per-content and per-device analytics, hourly/daily breakdowns, CSV export for ad verification
 - **Device telemetry** — battery, storage, RAM, CPU, Wi-Fi signal strength and uptime reported by the players, plus both of a display's addresses: its **local (LAN) IP** as the player sees itself, and the public/WAN address the server saw it connect from. Wi-Fi network name is included where the platform allows it (Android 10+ needs an opt-in location permission — see Device Setup)
@@ -38,9 +43,11 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 - **Mobile-responsive** — full management dashboard and landing page work on phones and tablets
 - **Workspaces** — multi-tenant data model: organizations contain workspaces, workspaces contain devices/content/playlists/schedules; users can be members of multiple workspaces and switch via a dropdown in the sidebar
 - **Member roles** — six-level hierarchy (platform_admin / org_owner / org_admin / workspace_admin / workspace_editor / workspace_viewer) gated at every API route
+- **Approval & version history** — optional per-workspace review before a change goes live, with retained past versions of content, playlists, and slides and one-click restore (restoring never changes what is currently playing until you publish)
 - **Alerts** — email notifications via Microsoft Graph when devices go offline; built-in spam protection (2h dedup, 24h long-offline cutoff, sequential send pattern); per-user opt-out via Settings → Account
 - **White-label** — custom branding, colors, logo, favicon, CSS, and domain
 - **Content management** — folder organization, remote URL content (no upload needed), YouTube embeds, video duration detection via ffprobe, automatic thumbnail generation, Unicode-safe filenames (NFC normalization + UTF-8 multipart decoding)
+- **PDF to playlist** — drop in a PDF and every page becomes a full-screen slide in a playlist, rendered in your browser (no server-side PDF dependency)
 - **Export/Import** — v2 format with playlists, device groups, schedules, and optional media bundling (ZIP); backward-compatible v1 import with automatic playlist migration
 - **Device authentication** — per-device tokens for secure WebSocket connections; devices authenticate on every reconnect
 - **Account management** — in-app password change, profile editing, email-based password reset
@@ -207,6 +214,7 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `PLUGINS_ENABLED` | Load the plugin system (widget types, data-source resolvers, optional routes). Off by default and invisible — see [Plugins](docs/plugins.md). | unset |
 | `PLUGINS_DIR` | Operator-installed plugins. Survives `git pull`. | `$DATA_DIR/plugins` |
 | `PLUGIN_INBOX_DIR` | Quarantine for uploaded plugin zips. Not a plugin root. | `$DATA_DIR/plugin-inbox` |
+| `BUNDLED_PLUGINS_DIR` | Read-only sample plugins shipped with the app. | `plugins/` in the repo |
 
 #### Android players under an MDM
 
