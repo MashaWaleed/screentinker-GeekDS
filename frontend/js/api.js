@@ -68,6 +68,7 @@ const MESH_WRITABLE = [
   { pattern: '/playlists',                     method: 'POST' },
   { pattern: '/playlists/:id',                 method: 'PUT' },
   { pattern: '/playlists/:id/items',           method: 'POST' },
+  { pattern: '/playlists/:id/items/selection', method: 'POST' },
   { pattern: '/playlists/:id/items/:itemId',   method: 'PUT' },
   { pattern: '/playlists/:id/items/:itemId',   method: 'DELETE' },
   { pattern: '/playlists/:id/publish',         method: 'POST' },
@@ -576,6 +577,7 @@ export const api = {
   addPlaylistItemsBulk: (id, content_ids, zone_id) => request(`/playlists/${id}/items/bulk`, {
     method: 'POST', body: JSON.stringify(zone_id ? { content_ids, zone_id } : { content_ids }),
   }),
+  playlistSelection: (id, body) => request(`/playlists/${id}/items/selection`, { method: 'POST', body: JSON.stringify(body) }),
   reorderPlaylistItems: (id, order) => request(`/playlists/${id}/items/reorder`, { method: 'POST', body: JSON.stringify({ order }) }),
   // #74/#75 per-item schedule blocks
   getItemSchedules: (id, itemId) => request(`/playlists/${id}/items/${itemId}/schedules`),

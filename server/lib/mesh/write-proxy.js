@@ -32,6 +32,7 @@ const WRITABLE = Object.freeze([
   { pattern: '/api/playlists',                     method: 'POST',   grant: 'content-push' },
   { pattern: '/api/playlists/:id',                 method: 'PUT',    grant: 'content-push' },
   { pattern: '/api/playlists/:id/items',           method: 'POST',   grant: 'content-push' },
+  { pattern: '/api/playlists/:id/items/selection', method: 'POST',   grant: 'content-push' },
   { pattern: '/api/playlists/:id/items/:itemId',   method: 'PUT',    grant: 'content-push' },
   { pattern: '/api/playlists/:id/items/:itemId',   method: 'DELETE', grant: 'content-push' },
   { pattern: '/api/playlists/:id/publish',         method: 'POST',   grant: 'content-push' },

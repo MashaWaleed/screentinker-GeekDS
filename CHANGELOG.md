@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Checkbox selection on a playlist, and bulk actions that write the same fields the
+players already honour.** Shift-click a range, Select all, then copy / cut / paste /
+delete / duplicate, set duration, from/to, days-and-hours, activate or deactivate,
+log plays or don't, fit (layout / fit / fill / stretch), drop a transition widget
+in front of each selected item, or skip unless a data-source field matches.
+
+Deactivated items are dropped from the published snapshot, so a BrightSign still on
+an old player skips them too. Fit and "don't log" are additive: old players inherit
+the zone and keep logging. The data-source condition fails open if the bag is missing.
+
+The data-source "skip unless a field matches" condition is evaluated on every player — web,
+native Android, Tizen, the embedded/e-ink renderer, and BrightSign / webOS (which run the web
+player) — from the same `_ds` value bag, and fails open when the bag is missing.
+
+**From / to on a playlist item, next to duration.** Duration is still how long the file stays on
+screen when it plays. The new fields are an eligibility window: if the screen's local now is
+outside it, the item is skipped. Empty means always in the loop. This is an interval (3am inside
+the span plays), not a daypart — the clock icon still does Mon–Fri 9–5. The two AND together.
+Evaluated on the player (web, Android, Tizen, BrightSign/webOS via the web player, e-ink via the
+embedded renderer) so it works offline. Fails open. Rechecked at item boundaries. Times are
+`YYYY-MM-DDTHH:MM` in the screen's zone, never UTC. Old players ignore the new fields and keep
+playing everything.
+
+The Outlook calendar **shows** those windows on a playlist event (peek + stacked labels). It does
+not write `schedules` rows for them. Open playlist from the peek to edit.
+
 ## 2.1.0
 
 ### Added
@@ -25,7 +55,6 @@ on disk that changes the hash is a load error, not a new payload. Drop-folder in
 as before; **Pin** locks one of those to a hash the same way. Admin can inspect each file
 (plugin.json and index.js) before approving. This is the human gate, not a
 sandbox — plugins remain trusted code once they load.
-
 
 **Upload a PDF and it becomes a playlist.** Each page is rendered to a full-HD image, the pages land
 in a folder named after the document, and a playlist of the same name plays them in order. A

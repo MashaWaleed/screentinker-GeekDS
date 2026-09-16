@@ -260,6 +260,14 @@ const migrations = [
   // active device payload is built from playlist_items -> published_snapshot, which never
   // carried it, so the dashboard mute toggle was a no-op end to end.
   "ALTER TABLE playlist_items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0",
+  // Per-item play window: local YYYY-MM-DDTHH:MM, inclusive, evaluated on the sign.
+  // Null = no bound on that side. Not a daypart (that's playlist_item_schedules).
+  "ALTER TABLE playlist_items ADD COLUMN play_from TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN play_until TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE playlist_items ADD COLUMN log_play INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE playlist_items ADD COLUMN fit_mode TEXT",
+  "ALTER TABLE playlist_items ADD COLUMN play_when TEXT",
   // Slice 1: idempotency guard for the one-time signup welcome/admin emails.
   // Non-null = this user has already been handled, so we never double-send.
   // New signups are stamped with the real unix-seconds time the send block ran

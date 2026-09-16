@@ -39,6 +39,10 @@ function scheduleSummary(schedules) {
   if (!schedules || !schedules.length) return '';
   return schedules.length === 1 ? blockSummary(schedules[0]) : `${blockSummary(schedules[0])} +${schedules.length - 1}`;
 }
+function windowSummary(item) {
+  if (!item || (!item.play_from && !item.play_until)) return '';
+  return `${item.play_from || '…'} → ${item.play_until || '…'}`;
+}
 function validateScheduleBlocks(blocks) {
   for (const b of blocks) {
     if (!b.days || !b.days.length) return t('itemsched.err.days');
@@ -54,6 +58,9 @@ let currentPlaylistId = null;
 // #319: the items exactly as last rendered. Sorting needs the list the operator is looking at, and
 // every path that changes it already funnels through renderItems, so that is where it is kept.
 let currentPlaylistItems = [];
+let selectedItemIds = new Set();
+let selectAnchorId = null;
+const CLIP_KEY = 'st.playlistClipboard';
 
 export function render(container) {
   const hash = window.location.hash;
@@ -484,6 +491,8 @@ function renderDetailContent(container, playlist) {
       </select>
       <button class="btn btn-secondary btn-sm" id="playlistSortApply">${t('playlist.sort_apply')}</button>
     </div>
+    <div id="playlistSelectBar" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius)">
+    </div>
     <div id="playlistItems" style="display:flex;flex-direction:column;gap:8px">
     </div>
   `;
@@ -619,13 +628,338 @@ async function refreshAfterMutation() {
   } catch (e) { /* silent */ }
 }
 
+function selectedRows() {
+  return currentPlaylistItems.filter((it) => selectedItemIds.has(String(it.id)));
+}
+function clipPayload(items) {
+  return items.map((it) => ({
+    content_id: it.content_id || null,
+    widget_id: it.widget_id || null,
+    child_playlist_id: it.child_playlist_id || null,
+    zone_id: it.zone_id || null,
+    duration_sec: it.duration_sec,
+    muted: it.muted ? 1 : 0,
+    play_from: it.play_from || null,
+    play_until: it.play_until || null,
+    enabled: it.enabled === 0 ? 0 : 1,
+    log_play: it.log_play === 0 ? 0 : 1,
+    fit_mode: it.fit_mode || null,
+    play_when: it.play_when || null,
+    schedules: it.schedules || [],
+  }));
+}
+function setClip(items) {
+  // Returns whether the write actually landed — cut relies on this so it never deletes into a void
+  // (private mode / quota / disabled storage) and loses the items.
+  try {
+    sessionStorage.setItem(CLIP_KEY, JSON.stringify(items));
+    return sessionStorage.getItem(CLIP_KEY) != null;
+  } catch { return false; }
+}
+function getClip() {
+  try { return JSON.parse(sessionStorage.getItem(CLIP_KEY) || 'null'); } catch { return null; }
+}
+
+// Field paths a data source offers, derived from its last-fetched values (top level + one nesting).
+function fieldPathsOf(data) {
+  const out = [];
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return out;
+  for (const [k, v] of Object.entries(data)) {
+    out.push(k);
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const k2 of Object.keys(v)) out.push(`${k}.${k2}`);
+    }
+  }
+  return out.slice(0, 100);
+}
+
+// The data-source condition editor: real dropdowns instead of four prompts, validated before send.
+async function editConditionModal(ids, parsed) {
+  let sources = [];
+  try { sources = await api.getDataSources(); } catch { sources = []; }
+  const OPS = [['eq', '= equals'], ['neq', '≠ not equal'], ['gt', '> greater than'],
+    ['gte', '≥ at least'], ['lt', '< less than'], ['lte', '≤ at most'], ['truthy', 'is set / true']];
+  const curOp = (parsed && parsed.op) || 'eq';
+  const opts = sources.map((s) => `<option value="${esc(s.slug)}" ${parsed && parsed.slug === s.slug ? 'selected' : ''}>${esc(s.name || s.slug)}</option>`).join('');
+  const opOpts = OPS.map(([v, l]) => `<option value="${v}" ${curOp === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000';
+  modal.innerHTML = `
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:440px;max-width:92vw">
+      <h3 style="margin-bottom:6px;color:var(--text-primary)">${esc(t('playlist.bulk.condition'))}</h3>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">${esc(t('playlist.condition.hint'))}</p>
+      ${sources.length ? '' : `<p style="color:#fbbf24;font-size:13px;margin-bottom:12px">${esc(t('playlist.condition.no_sources'))}</p>`}
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.slug'))}</label>
+      <select id="condSlug" class="input" style="width:100%;margin:4px 0 12px">${opts}</select>
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.path'))}</label>
+      <input id="condPath" class="input" list="condFields" placeholder="e.g. status or now.title" value="${esc(parsed && parsed.path || '')}" style="width:100%;margin:4px 0 12px">
+      <datalist id="condFields"></datalist>
+      <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
+      <select id="condOp" class="input" style="width:100%;margin:4px 0 12px">${opOpts}</select>
+      <div id="condValueWrap">
+        <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.value'))}</label>
+        <input id="condValue" class="input" value="${esc(parsed && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:8px">
+        <button class="btn btn-secondary" id="condClear">${esc(t('playlist.condition.clear'))}</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" id="condCancel">${esc(t('common.cancel'))}</button>
+          <button class="btn btn-primary" id="condApply">${esc(t('playlist.bulk.apply'))}</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const slugSel = modal.querySelector('#condSlug');
+  const fieldList = modal.querySelector('#condFields');
+  const opSel = modal.querySelector('#condOp');
+  const valWrap = modal.querySelector('#condValueWrap');
+  const bySlug = new Map(sources.map((s) => [s.slug, s]));
+  const refreshFields = () => {
+    const src = bySlug.get(slugSel.value);
+    fieldList.innerHTML = fieldPathsOf(src && src.data).map((p) => `<option value="${esc(p)}">`).join('');
+  };
+  const refreshValue = () => { valWrap.hidden = opSel.value === 'truthy'; };
+  slugSel.addEventListener('change', refreshFields);
+  opSel.addEventListener('change', refreshValue);
+  refreshFields(); refreshValue();
+
+  const close = () => modal.remove();
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  modal.querySelector('#condCancel').addEventListener('click', close);
+  modal.querySelector('#condClear').addEventListener('click', async () => {
+    close(); await runSelection({ action: 'play_when', ids, play_when: null });
+    selectedItemIds.clear(); paintSelectBar(); showToast(t('playlist.bulk.updated').replace('{n}', ids.length));
+  });
+  modal.querySelector('#condApply').addEventListener('click', async () => {
+    const slug = slugSel.value;
+    const path = modal.querySelector('#condPath').value.trim();
+    const op = opSel.value;
+    const value = op === 'truthy' ? '' : modal.querySelector('#condValue').value;
+    if (!slug) { showToast(t('playlist.condition.no_sources'), 'error'); return; }
+    if (!path) { modal.querySelector('#condPath').focus(); return; }
+    close();
+    const r = await runSelection({ action: 'play_when', ids, play_when: { slug, path, op, value } });
+    if (r) { showToast(t('playlist.bulk.updated').replace('{n}', ids.length)); }
+  });
+}
+function paintSelectBar() {
+  const bar = document.getElementById('playlistSelectBar');
+  if (!bar) return;
+  const n = selectedItemIds.size;
+  bar.style.display = currentPlaylistItems.length ? 'flex' : 'none';
+  const clip = getClip();
+  bar.innerHTML = `
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);margin:0">
+      <input type="checkbox" id="playlistSelectAll" ${n && n === currentPlaylistItems.length ? 'checked' : ''}>
+      ${n ? t('playlist.selected').replace('{n}', n) : t('playlist.select_all')}
+    </label>
+    <span style="flex:1"></span>
+    <button class="btn btn-secondary btn-sm" data-sel="copy" ${n ? '' : 'disabled'}>${t('playlist.bulk.copy')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="cut" ${n ? '' : 'disabled'}>${t('playlist.bulk.cut')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="paste" ${clip && clip.length ? '' : 'disabled'}>${t('playlist.bulk.paste')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="duplicate" ${n ? '' : 'disabled'}>${t('playlist.bulk.duplicate')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="duration" ${n ? '' : 'disabled'}>${t('playlist.bulk.duration')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="window" ${n ? '' : 'disabled'}>${t('playlist.bulk.window')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="validity" ${n ? '' : 'disabled'}>${t('playlist.bulk.validity')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="activate" ${n ? '' : 'disabled'}>${t('playlist.bulk.activate')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="deactivate" ${n ? '' : 'disabled'}>${t('playlist.bulk.deactivate')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="log_on" ${n ? '' : 'disabled'}>${t('playlist.bulk.log_on')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="log_off" ${n ? '' : 'disabled'}>${t('playlist.bulk.log_off')}</button>
+    <select class="input" id="playlistBulkFit" ${n ? '' : 'disabled'} style="width:auto;background:var(--bg-input);font-size:13px">
+      <option value="">${t('playlist.bulk.fit')}</option>
+      <option value="inherit">${t('playlist.bulk.fit_inherit')}</option>
+      <option value="contain">${t('playlist.bulk.fit_contain')}</option>
+      <option value="cover">${t('playlist.bulk.fit_cover')}</option>
+      <option value="fill">${t('playlist.bulk.fit_fill')}</option>
+    </select>
+    <button class="btn btn-secondary btn-sm" data-sel="transition" ${n ? '' : 'disabled'}>${t('playlist.bulk.transition')}</button>
+    <button class="btn btn-secondary btn-sm" data-sel="condition" ${n ? '' : 'disabled'}>${t('playlist.bulk.condition')}</button>
+    <button class="btn btn-sm" data-sel="delete" ${n ? '' : 'disabled'} style="color:var(--danger)">${t('playlist.bulk.delete')}</button>
+  `;
+  const all = bar.querySelector('#playlistSelectAll');
+  if (all) all.onchange = () => {
+    if (all.checked) currentPlaylistItems.forEach((it) => selectedItemIds.add(String(it.id)));
+    else selectedItemIds.clear();
+    renderItems(currentPlaylistItems);
+  };
+  bar.querySelector('#playlistBulkFit')?.addEventListener('change', async (e) => {
+    const v = e.target.value;
+    if (!v || !n) return;
+    await runSelection({ action: 'fit_mode', ids: [...selectedItemIds], fit_mode: v === 'inherit' ? null : v });
+  });
+  bar.querySelectorAll('[data-sel]').forEach((btn) => {
+    btn.onclick = () => handleSelection(btn.dataset.sel);
+  });
+}
+function bindSelection(itemsEl, items) {
+  itemsEl.querySelectorAll('.item-select').forEach((box) => {
+    // A `change` event is not a MouseEvent, so e.shiftKey is undefined there. Capture the modifier
+    // from the mouse event that precedes it (mousedown/click both fire before change on a checkbox).
+    let shiftHeld = false;
+    box.addEventListener('mousedown', (e) => { shiftHeld = e.shiftKey; e.stopPropagation(); });
+    box.addEventListener('click', (e) => { shiftHeld = e.shiftKey; e.stopPropagation(); });
+    box.addEventListener('keydown', (e) => { shiftHeld = e.shiftKey; }); // keyboard toggle
+    box.addEventListener('change', (e) => {
+      const id = String(e.target.dataset.itemId);
+      const idx = Number(e.target.dataset.index);
+      // Anchor is tracked by item id, not index, so it survives a re-sort/re-render.
+      const anchorIdx = selectAnchorId != null ? items.findIndex((it) => String(it.id) === selectAnchorId) : -1;
+      if (shiftHeld && anchorIdx >= 0) {
+        const a = Math.min(anchorIdx, idx);
+        const b = Math.max(anchorIdx, idx);
+        for (let i = a; i <= b; i++) {
+          const it = items[i];
+          if (it) selectedItemIds.add(String(it.id));
+        }
+      } else if (e.target.checked) {
+        selectedItemIds.add(id);
+        selectAnchorId = id;
+      } else {
+        selectedItemIds.delete(id);
+        selectAnchorId = id;
+      }
+      paintSelectBar();
+      itemsEl.querySelectorAll('.playlist-item').forEach((row) => {
+        row.style.borderColor = selectedItemIds.has(String(row.dataset.itemId)) ? 'var(--accent, #3B82F6)' : 'var(--border)';
+      });
+      itemsEl.querySelectorAll('.item-select').forEach((cb) => {
+        cb.checked = selectedItemIds.has(String(cb.dataset.itemId));
+      });
+    });
+  });
+}
+async function refreshSelection() {
+  const playlist = await api.getPlaylist(currentPlaylistId);
+  renderItems(playlist.items || []);
+  refreshAfterMutation();
+}
+async function runSelection(body) {
+  try {
+    const r = await api.playlistSelection(currentPlaylistId, body);
+    await refreshSelection();
+    return r;
+  } catch (err) {
+    showToast(err.message, 'error');
+    return null;
+  }
+}
+async function handleSelection(act) {
+  const ids = [...selectedItemIds];
+  const rows = selectedRows();
+  if (act === 'copy') {
+    setClip(clipPayload(rows));
+    paintSelectBar();
+    showToast(t('playlist.bulk.copied').replace('{n}', rows.length));
+    return;
+  }
+  if (act === 'cut') {
+    // Never delete unless the clipboard write is confirmed, or a failed write would lose the items.
+    if (!setClip(clipPayload(rows))) { showToast(t('playlist.bulk.clip_failed')); return; }
+    const r = await runSelection({ action: 'delete', ids });
+    if (r) {
+      selectedItemIds.clear();
+      showToast(t('playlist.bulk.cut_done').replace('{n}', rows.length));
+    }
+    return;
+  }
+  if (act === 'paste') {
+    const items = getClip();
+    if (!items || !items.length) return;
+    const r = await runSelection({ action: 'paste', items });
+    if (r) showToast(t('playlist.bulk.pasted').replace('{n}', r.added || items.length));
+    return;
+  }
+  if (act === 'delete') {
+    if (!ids.length) return;
+    const r = await runSelection({ action: 'delete', ids });
+    if (r) { selectedItemIds.clear(); showToast(t('playlist.bulk.deleted').replace('{n}', r.deleted || ids.length)); }
+    return;
+  }
+  if (act === 'duplicate') {
+    const r = await runSelection({ action: 'duplicate', ids });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.duplicated || ids.length));
+    return;
+  }
+  if (act === 'activate') {
+    const r = await runSelection({ action: 'enabled', ids, enabled: 1 });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
+    return;
+  }
+  if (act === 'deactivate') {
+    // Deactivating every currently-enabled item empties the published snapshot, so the screen falls
+    // to its "Nothing scheduled" idle state. Confirm before doing that by accident.
+    const enabledCount = currentPlaylistItems.filter((it) => it.enabled !== 0).length;
+    const deactivatingEnabled = rows.filter((it) => it.enabled !== 0).length;
+    if (deactivatingEnabled >= enabledCount && enabledCount > 0
+        && !confirm(t('playlist.bulk.deactivate_all_warn'))) return;
+    const r = await runSelection({ action: 'enabled', ids, enabled: 0 });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
+    return;
+  }
+  if (act === 'log_on') {
+    const r = await runSelection({ action: 'log_play', ids, log_play: 1 });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
+    return;
+  }
+  if (act === 'log_off') {
+    const r = await runSelection({ action: 'log_play', ids, log_play: 0 });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
+    return;
+  }
+  if (act === 'duration') {
+    const raw = prompt(t('playlist.bulk.duration'), rows[0] && rows[0].duration_sec || 10);
+    if (raw == null) return;
+    const d = parseInt(raw, 10);
+    if (!d || d < 1) return;
+    const r = await runSelection({ action: 'duration', ids, duration_sec: d });
+    if (r) showToast(t('playlist.bulk.updated').replace('{n}', r.updated || ids.length));
+    return;
+  }
+  if (act === 'window') {
+    const from = prompt(t('playlist.play_from'), (rows[0] && rows[0].play_from) || '');
+    if (from == null) return;
+    const until = prompt(t('playlist.play_until'), (rows[0] && rows[0].play_until) || '');
+    if (until == null) return;
+    return runSelection({ action: 'play_window', ids, play_from: from || null, play_until: until || null });
+  }
+  if (act === 'validity') {
+    const first = rows[0];
+    if (!first) return;
+    showScheduleModal(first, { applyIds: ids });
+    return;
+  }
+  if (act === 'transition') {
+    try {
+      const widgets = await api.getWidgets();
+      const trans = (Array.isArray(widgets) ? widgets : []).filter((w) => w.widget_type === 'transition');
+      if (!trans.length) { showToast(t('playlist.bulk.no_transition'), 'error'); return; }
+      const pick = prompt(trans.map((w, i) => `${i + 1}. ${w.name}`).join('\n'));
+      if (pick == null) return;
+      const idx = parseInt(pick, 10) - 1;
+      const w = trans[idx] || trans.find((x) => x.name === pick);
+      if (!w) return;
+      return runSelection({ action: 'transition', ids, widget_id: w.id });
+    } catch (err) { showToast(err.message, 'error'); }
+    return;
+  }
+  if (act === 'condition') {
+    const cur = rows[0] && rows[0].play_when;
+    const parsed = typeof cur === 'string' ? (() => { try { return JSON.parse(cur); } catch { return null; } })() : cur;
+    return editConditionModal(ids, parsed);
+  }
+}
+
 function renderItems(items) {
   const itemsEl = document.getElementById('playlistItems');
   if (!itemsEl) return;
   currentPlaylistItems = items || [];
-  // #319: only worth showing once manual reordering has become a chore.
+  const present = new Set(currentPlaylistItems.map((it) => String(it.id)));
+  selectedItemIds = new Set([...selectedItemIds].filter((id) => present.has(id)));
   const sortBar = document.getElementById('playlistSortBar');
   if (sortBar) sortBar.style.display = items.length > 1 ? 'flex' : 'none';
+  paintSelectBar();
 
   if (!items.length) {
     itemsEl.innerHTML = `
@@ -638,7 +972,8 @@ function renderItems(items) {
   }
 
   itemsEl.innerHTML = items.map((item, i) => `
-    <div class="playlist-item" data-item-id="${item.id}" data-index="${i}" draggable="true" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:grab;transition:border-color 0.15s">
+    <div class="playlist-item" data-item-id="${item.id}" data-index="${i}" draggable="true" style="background:var(--bg-card);border:1px solid ${selectedItemIds.has(String(item.id)) ? 'var(--accent, #3B82F6)' : 'var(--border)'};border-radius:var(--radius);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:grab;transition:border-color 0.15s;${item.enabled === 0 ? 'opacity:0.55' : ''}">
+      <input type="checkbox" class="item-select" data-item-id="${item.id}" data-index="${i}" ${selectedItemIds.has(String(item.id)) ? 'checked' : ''} style="flex-shrink:0" onclick="event.stopPropagation()">
       <div style="color:var(--text-muted);font-size:12px;min-width:24px;text-align:center;user-select:none">${i + 1}</div>
       <div style="width:48px;height:36px;border-radius:4px;overflow:hidden;background:var(--bg-input);flex-shrink:0;display:flex;align-items:center;justify-content:center">
         ${item.child_playlist_id
@@ -652,19 +987,20 @@ function renderItems(items) {
         <div style="font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.child_playlist_name || item.filename || item.widget_name || t('common.unknown'))}</div>
         <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px;min-width:0">
           <span style="white-space:nowrap">${item.child_playlist_id ? t('playlist.item_nested') : item.widget_id ? t('playlist.item_widget') : esc(item.mime_type || t('playlist.unknown_type'))}</span>
+          ${item.play_from || item.play_until ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#1a2e1a;color:#86efac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(windowSummary(item))}">${esc(windowSummary(item))}</span>` : ''}
           ${item.schedules && item.schedules.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#0c2a3f;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(scheduleSummary(item.schedules))}">🕐 ${esc(scheduleSummary(item.schedules))}</span>` : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${item.child_playlist_id
-          // ⚠️ No duration control on a nested reference, deliberately. Phase 1 plays the whole
-          // child through; each of ITS items keeps its own duration. A box here would imply the
-          // parent can cap or override the child, which is phase 2 (cursored) and not built —
-          // and five of six vendors surveyed do not let a parent reach inside either.
           ? `<span style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.nested_duration_hint'))}">${esc(t('playlist.plays_through'))}</span>`
           : `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.duration')}</label>
         <input type="number" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`}
+        <label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.play_window_hint'))}">${t('playlist.play_from')}</label>
+        <input type="datetime-local" class="input item-play-from" data-item-id="${item.id}" value="${esc(item.play_from || '')}" style="width:168px;padding:4px 6px;font-size:12px">
+        <label style="font-size:12px;color:var(--text-muted)">${t('playlist.play_until')}</label>
+        <input type="datetime-local" class="input item-play-until" data-item-id="${item.id}" value="${esc(item.play_until || '')}" style="width:168px;padding:4px 6px;font-size:12px">
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
         <button class="btn-icon item-schedule" data-item-id="${item.id}" title="${t('itemsched.title')}" aria-label="${t('itemsched.title')}" style="color:${item.schedules && item.schedules.length ? '#38bdf8' : 'var(--text-muted)'};background:none;border:none;cursor:pointer;padding:4px;border-radius:4px">
@@ -689,6 +1025,7 @@ function renderItems(items) {
     </div>
   `).join('');
   hydrateAuthImages(itemsEl);
+  bindSelection(itemsEl, items);
 
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
     input.addEventListener('change', async (e) => {
@@ -702,6 +1039,23 @@ function renderItems(items) {
         showToast(err.message, 'error');
       }
     });
+  });
+
+  const savePlayWindow = async (el, field) => {
+    const itemId = el.dataset.itemId;
+    const val = el.value || null;
+    try {
+      await api.updatePlaylistItem(currentPlaylistId, itemId, { [field]: val });
+      refreshAfterMutation();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+  itemsEl.querySelectorAll('.item-play-from').forEach(input => {
+    input.addEventListener('change', (e) => savePlayWindow(e.target, 'play_from'));
+  });
+  itemsEl.querySelectorAll('.item-play-until').forEach(input => {
+    input.addEventListener('change', (e) => savePlayWindow(e.target, 'play_until'));
   });
 
   itemsEl.querySelectorAll('.item-remove').forEach(btn => {
@@ -781,6 +1135,7 @@ function setupDragReorder(container) {
   let dragEl = null;
 
   container.addEventListener('dragstart', (e) => {
+    if (e.target.closest('.item-select')) { e.preventDefault(); return; }
     dragEl = e.target.closest('.playlist-item');
     if (!dragEl) return;
     dragEl.style.opacity = '0.4';
@@ -1209,7 +1564,7 @@ async function showAddItemModal(playlistId, opts = {}) {
 // #74/#75: per-item schedule editor. Multiple blocks (days + time window + optional
 // date range) OR together; an item with no blocks always plays. Client validation
 // mirrors the server; saving marks the playlist DRAFT (must re-publish to reach devices).
-function showScheduleModal(item) {
+function showScheduleModal(item, opts = {}) {
   let blocks = (item.schedules || []).map(b => ({
     days: Array.isArray(b.days) ? [...b.days] : [],
     start: b.start || '00:00',
@@ -1296,8 +1651,12 @@ function showScheduleModal(item) {
     const err = validateScheduleBlocks(payload);
     if (err) { showToast(err, 'error'); return; }
     try {
-      const saved = await api.setItemSchedules(currentPlaylistId, item.id, payload);
-      item.schedules = saved;
+      if (opts.applyIds && opts.applyIds.length) {
+        await api.playlistSelection(currentPlaylistId, { action: 'schedules', ids: opts.applyIds, blocks: payload });
+      } else {
+        const saved = await api.setItemSchedules(currentPlaylistId, item.id, payload);
+        item.schedules = saved;
+      }
       modal.remove();
       // Saving makes the playlist a DRAFT — surface the re-publish step explicitly.
       showToast(payload.length ? t('itemsched.toast.saved') : t('itemsched.toast.cleared'));

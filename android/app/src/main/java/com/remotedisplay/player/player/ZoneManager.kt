@@ -145,23 +145,29 @@ class ZoneManager(
 
     // #74/#75 zone schedule helpers.
     private fun assignmentAllows(a: JSONObject): Boolean {
-        val arr = a.optJSONArray("schedules") ?: return true
-        if (arr.length() == 0) return true
-        val blocks = ArrayList<ScheduleEval.Block>(arr.length())
-        for (j in 0 until arr.length()) {
-            val s = arr.getJSONObject(j)
-            val d = s.getJSONArray("days")
-            val days = HashSet<Int>(d.length())
-            for (k in 0 until d.length()) days.add(d.getInt(k))
-            blocks.add(
-                ScheduleEval.Block(
-                    days, s.getString("start"), s.getString("end"),
-                    if (s.isNull("start_date")) null else s.optString("start_date").ifEmpty { null },
-                    if (s.isNull("end_date")) null else s.optString("end_date").ifEmpty { null }
+        if (a.optInt("enabled", 1) == 0) return false
+        val arr = a.optJSONArray("schedules")
+        val blocks = ArrayList<ScheduleEval.Block>()
+        if (arr != null) {
+            for (j in 0 until arr.length()) {
+                val s = arr.getJSONObject(j)
+                val d = s.getJSONArray("days")
+                val days = HashSet<Int>(d.length())
+                for (k in 0 until d.length()) days.add(d.getInt(k))
+                blocks.add(
+                    ScheduleEval.Block(
+                        days, s.getString("start"), s.getString("end"),
+                        if (s.isNull("start_date")) null else s.optString("start_date").ifEmpty { null },
+                        if (s.isNull("end_date")) null else s.optString("end_date").ifEmpty { null }
+                    )
                 )
-            )
+            }
         }
-        return ScheduleEval.isItemActiveNow(blocks, System.currentTimeMillis(), effectiveTimezone)
+        val window = ScheduleEval.windowOf(
+            if (a.isNull("play_from")) null else a.optString("play_from").ifEmpty { null },
+            if (a.isNull("play_until")) null else a.optString("play_until").ifEmpty { null }
+        )
+        return ScheduleEval.isItemActiveNow(blocks, System.currentTimeMillis(), effectiveTimezone, window)
     }
 
     private fun zoneNextActive(assignments: List<JSONObject>, from: Int): Int {
@@ -189,7 +195,11 @@ class ZoneManager(
         }
         val a = assignments[activeIdx]
         // Scheduled zones cycle even with one active item so windows re-evaluate.
-        val multi = assignments.size > 1 || assignments.any { (it.optJSONArray("schedules")?.length() ?: 0) > 0 }
+        val multi = assignments.size > 1 || assignments.any {
+            (it.optJSONArray("schedules")?.length() ?: 0) > 0
+                || !it.isNull("play_from") && it.optString("play_from").isNotEmpty()
+                || !it.isNull("play_until") && it.optString("play_until").isNotEmpty()
+        }
         val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
@@ -281,7 +291,7 @@ class ZoneManager(
             // Image
             mimeType.startsWith("image/") -> {
                 val imageView = ImageView(context).apply {
-                    scaleType = when (zone.fitMode) {
+                    scaleType = when (a.optString("fit_mode", zone.fitMode).ifEmpty { zone.fitMode }) {
                         "contain" -> ImageView.ScaleType.FIT_CENTER
                         "fill" -> ImageView.ScaleType.FIT_XY
                         else -> ImageView.ScaleType.CENTER_CROP

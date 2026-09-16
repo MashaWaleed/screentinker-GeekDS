@@ -28,6 +28,15 @@ data class PlaylistItem(
     val contentRev: Long = 0L,
     val widgetType: String? = null,
     val schedules: List<ScheduleEval.Block> = emptyList(),
+    // Inclusive local play window (YYYY-MM-DDTHH:MM). Null = unbounded on that side.
+    val playFrom: String? = null,
+    val playUntil: String? = null,
+    val logPlay: Boolean = true,
+    val fitMode: String? = null,
+    // Data-source "skip unless a field matches" condition + the resolved value bag (_ds) the server
+    // attached for its slug. Fails open when the bag is missing. See ScheduleEval.conditionOk.
+    val playWhen: ScheduleEval.Condition? = null,
+    val dataBag: JSONObject? = null,
     /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
@@ -228,6 +237,12 @@ class PlaylistController(
                     contentRev = obj.optLong("content_rev", 0L),
                     widgetType = if (obj.isNull("widget_type")) null else obj.optString("widget_type", "").ifEmpty { null },
                     schedules = parseSchedules(obj.optJSONArray("schedules")),
+                    playFrom = if (obj.isNull("play_from")) null else obj.optString("play_from", "").ifEmpty { null },
+                    playUntil = if (obj.isNull("play_until")) null else obj.optString("play_until", "").ifEmpty { null },
+                    logPlay = obj.optInt("log_play", 1) != 0,
+                    fitMode = if (obj.isNull("fit_mode")) null else obj.optString("fit_mode", "").ifEmpty { null },
+                    playWhen = ScheduleEval.parseCondition(obj.optJSONObject("play_when")),
+                    dataBag = obj.optJSONObject("_ds"),
                     transition = Transitions.parse(obj.optJSONObject("transition")),
                     slideAudio = parseSlideAudio(obj.optJSONObject("audio"))
                 )
@@ -255,7 +270,8 @@ class PlaylistController(
         fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + it.widgetRev + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
-            } + "|" + (it.transition?.sig() ?: "")
+            } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
+            "|" + (it.playWhen?.let { c -> c.path + c.op + (c.value ?: "") } ?: "")
         val oldContentIds = items.map(::sig)
         val newContentIds = newItems.map(::sig)
         val playlistChanged = oldContentIds != newContentIds
@@ -554,9 +570,9 @@ class PlaylistController(
         // Proof-of-play (parity with the web player): close the outgoing item and open this one.
         // Wall followers don't log — the leader's single row represents the whole wall.
         if (!wallFollower) {
-            loggedItem?.let { prev -> if (prev !== item) onPlayLog?.invoke("play_end", prev, true) }
-            onPlayLog?.invoke("play_start", item, false)
-            loggedItem = item
+            loggedItem?.let { prev -> if (prev !== item && prev.logPlay) onPlayLog?.invoke("play_end", prev, true) }
+            if (item.logPlay) onPlayLog?.invoke("play_start", item, false)
+            loggedItem = if (item.logPlay) item else null
         }
 
         // For images and widgets, auto-advance after duration. For videos, wait
@@ -590,8 +606,19 @@ class PlaylistController(
 
     // #74/#75 schedule helpers ---------------------------------------------------
     private fun scheduleAllows(item: PlaylistItem): Boolean =
-        item.schedules.isEmpty() ||
-            ScheduleEval.isItemActiveNow(item.schedules, System.currentTimeMillis(), effectiveTimezone)
+        try {
+            if (!item.enabled) false
+            else if (!ScheduleEval.isItemActiveNow(
+                    item.schedules,
+                    System.currentTimeMillis(),
+                    effectiveTimezone,
+                    ScheduleEval.windowOf(item.playFrom, item.playUntil)
+                )) false
+            // Data-source condition, evaluated on the same _ds bag the web/Tizen/e-ink players use.
+            // Fails open on a missing bag (see ScheduleEval.conditionOk), so this can only ever
+            // REMOVE an item the window already allowed, never blank a screen on missing data.
+            else ScheduleEval.conditionOk(item.playWhen, item.dataBag)
+        } catch (e: Throwable) { true }
 
     // #group-sync schedule engine. Lay the deterministic playlist (each active item occupies a
     // CANONICAL slot, dayparted items skipped) on the server-disciplined clock and derive the target

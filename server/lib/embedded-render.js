@@ -685,7 +685,7 @@ async function renderLayoutNative(layout, zoneEntries, screenProfile, options = 
     }
 
     if (img) {
-      const fitMode = safeFitMode(zone.fit_mode);
+      const fitMode = safeFitMode((entry.item && entry.item.fit_mode) || zone.fit_mode);
       if (fitMode === 'cover') {
         img.cover({ w: pixelW, h: pixelH });
       } else if (fitMode === 'fill') {
@@ -733,7 +733,7 @@ async function renderLayout(layout, zoneEntries, screenProfile, options = {}) {
     const w = Number.isFinite(Number(zone.width_percent)) ? Math.max(0, Math.min(100, Number(zone.width_percent))) : 100;
     const h = Number.isFinite(Number(zone.height_percent)) ? Math.max(0, Math.min(100, Number(zone.height_percent))) : 100;
     const zIndex = Number.isFinite(Number(zone.z_index)) ? Math.floor(Number(zone.z_index)) : 0;
-    const fitMode = safeFitMode(zone.fit_mode);
+    const fitMode = safeFitMode((item && item.fit_mode) || zone.fit_mode);
     const safeZoneBg = safeHexColor(zone.background_color, null);
     const zoneBg = safeZoneBg ? `background-color: ${safeZoneBg};` : '';
 
