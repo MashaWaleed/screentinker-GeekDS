@@ -1,0 +1,19 @@
+[Unit]
+Description=ScreenTinker Linux signage player (DRM/fbdev + ffmpeg)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Edit --server to your ScreenTinker instance. --display defaults to "auto"
+# (DRM/KMS first, falling back to /dev/fb0) so it's usually fine to omit.
+ExecStart=/usr/bin/stlinux-player --server https://your-screentinker-host
+Restart=always
+RestartSec=3
+# Needs /dev/dri/* or /dev/fb0 + /dev/snd/* access; simplest is running as
+# root on a dedicated signage box. To run unprivileged instead, add this
+# unit's user to the `video`, `render` and `audio` groups.
+User=root
+
+[Install]
+WantedBy=multi-user.target
