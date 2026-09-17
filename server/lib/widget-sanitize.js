@@ -12,8 +12,15 @@
  */
 
 function escapeHtml(str) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  // ⚠️ COERCE FIRST. Returning a non-string unchanged (the old behaviour) was an escaping bypass:
+  // widget `config` is stored verbatim and only `slide` widgets are normalized, so a field that is a
+  // JSON array/object (e.g. weather `location`, social `platform`/`query`, rss `feed_url`) reached a
+  // template sink unescaped and was string-coerced there — Array.prototype.toString does not escape
+  // quotes, so an array value in a JS-string context (rss `feed_url`) meant arbitrary JS. String()
+  // it before replacing, exactly as slide-render's escapeHtml does. null/undefined -> '' so the
+  // `escapeHtml(x) || 'default'` sinks keep their defaults.
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Validate URL is http/https
