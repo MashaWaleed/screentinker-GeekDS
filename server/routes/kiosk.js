@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2e: workspace-aware access. Same pattern as content/widgets/folders.
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 
 // Escape HTML to prevent XSS
 function escapeHtml(str) {
@@ -222,6 +222,7 @@ router.get('/:id/render', (req, res) => {
 // Create kiosk page in the caller's current workspace.
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating kiosk pages.' });
+  if (denyReadOnly(req, res)) return;
   const { name, config: pageConfig } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
