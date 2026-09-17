@@ -55,6 +55,19 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Discarding a draft no longer strips per-item schedules.** A discard rebuilt the playlist's items
+from the published version but dropped their per-item schedule blocks (dayparting and validity): the
+published structure never captured them and the re-insert never wrote them, so discarding an unrelated
+draft edit silently removed the schedules from every item. Publish now captures the blocks into the
+structure, and discard restores them.
+
+**Bulk actions are safer, and an embedded panel's cursor stops drifting.** The bulk duplicate action
+ran its inserts without a transaction, so a mid-batch failure left a half-duplicated selection; it is
+now atomic like every other bulk action. Paste also accepted a schedule block with no days (stored as
+a block that never plays); it now requires at least one day, matching the normal editor. And an
+embedded e-ink panel's playlist cursor no longer advances as a side effect of a metadata poll or a
+dashboard preview, only a real device render moves it, so a monitor polling the info endpoint can no
+longer make a panel skip an item.
 **Security: token-scope and stale-membership gaps.** Four workspace-scoping fixes from the review. The embedded (e-ink) device-content router was mounted outside the API-token scope gate, so an `agency` or `billing:read` token could read a device's rendered content in its workspace; it now accepts only read-ladder tokens. Workspace export and import trusted the JWT's `current_workspace_id` without re-checking membership, so a user removed from a workspace but still holding a token could export its branding or import into it and overwrite its branding; both now re-validate the claim against current access. A schedule PUT could set a `zone_id` belonging to another workspace's layout (POST already checked); it now validates it. And a content upload accepted a `folder_id` from another workspace (edit and batch-move already checked); it now validates it. None is cross-tenant data disclosure.
 **Security: read-only members could create content in their workspace.** The read-only-viewer gate was enforced on edit and delete but missing on the CREATE routes, so a `workspace_viewer` could still upload content, add remote/YouTube/live-stream content, create widgets, upload fonts, add custom shader transitions, create kiosk pages, and create or duplicate layouts. Added a shared `denyReadOnly` gate to those routes (and to the custom-shader delete, which scoped by workspace but not role). This is the same read-only escalation class as the slide-deck and token fixes; none of it is cross-tenant.
 

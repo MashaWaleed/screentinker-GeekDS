@@ -292,7 +292,7 @@ function defaultResolved(deviceId) {
   return { item, content: item, itemIndex: 0, expiresIn: 3600, total: 1 };
 }
 
-function resolveCurrentItem(deviceId, forceIndex) {
+function resolveCurrentItem(deviceId, forceIndex, { advance = true } = {}) {
   const { playlist_id } = resolveDeviceContext(deviceId);
   if (!playlist_id) return defaultResolved(deviceId);
 
@@ -320,7 +320,7 @@ function resolveCurrentItem(deviceId, forceIndex) {
 
   let cursor = CURSOR_GET.get(deviceId);
   if (!cursor) {
-    CURSOR_UPSERT.run(deviceId, 0);
+    if (advance) CURSOR_UPSERT.run(deviceId, 0);
     cursor = { item_index: 0, started_at: now };
   }
 
@@ -336,7 +336,7 @@ function resolveCurrentItem(deviceId, forceIndex) {
     const next = PlayOrder.nextIndex(allItems, idx, allows, mode, state);
     if (next < 0) return defaultResolved(deviceId);
     idx = next;
-    CURSOR_UPSERT.run(deviceId, idx);
+    if (advance) CURSOR_UPSERT.run(deviceId, idx);   // read-only callers (/info, preview) must not move the panel
     startedAt = now;
   }
 
@@ -603,7 +603,9 @@ router.get('/info', resolveAuth, (req, res) => {
 
   touchDeviceHeartbeat(device, req);
   const profile = parseProfile(device.screen_profile);
-  const resolved = resolveCurrentItem(device.id, req.query.item);
+  // /info is metadata (MCU negotiation / debugging / monitors). It must NOT advance the panel's
+  // cursor, or a poll that lands after the current item's dwell would make the real render skip an item.
+  const resolved = resolveCurrentItem(device.id, req.query.item, { advance: false });
 
   res.json({
     device_id: device.id,
@@ -722,14 +724,16 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   const signal = opts.signal || ac.signal;
 
   const forceIndex = req.query.item !== undefined ? req.query.item : null;
-  const resolved = resolveCurrentItem(device.id, forceIndex);
+  const isPreview = req.query.preview === '1';
+  // A dashboard preview must not advance the real device's cursor (an ?item= override already never
+  // does). A genuine device render still advances, time-gated by the current item's dwell.
+  const resolved = resolveCurrentItem(device.id, forceIndex, { advance: !isPreview });
   if (!resolved) {
     return res.status(404).json({ error: 'No playlist assigned or no active items for this device.' });
   }
 
   const clientIp = touchDeviceHeartbeat(device, req);
   const { item, content, itemIndex, expiresIn, total } = resolved;
-  const isPreview = req.query.preview === '1';
 
   console.log(`[embedded] Device '${device.name}' (${device.id}) requested frame [item=${itemIndex + 1}/${total}] from ${clientIp}`);
 
