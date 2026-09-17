@@ -642,7 +642,7 @@ function requestOfflineCache(items, extraItems) {
   try {
     const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
     if (!sw) return;
-    const all = (items || []).concat(extraItems || []);
+    const all = (items || []).concat(extraItems || [], defaultContent ? [defaultContent] : []);
     const urls = all.filter((it) => it && it.filepath && !it.remote_url).map((it) => mediaUrl(it));
     sw.postMessage({ type: "st-cache-playlist", urls, prune: true });
     for (const it of all) {
@@ -658,6 +658,8 @@ function requestOfflineCache(items, extraItems) {
 }
 const TRIGGERS_CACHE_KEY = "rd_triggers_cache" + SCREEN_SUFFIX;
 let triggers = loadTriggersCache();
+let defaultContent = null;
+let _defaultShownRev = null;
 const TRIGGER_CFG_KEY = "rd_trigger_cfg" + SCREEN_SUFFIX;
 let triggerConfig = (function() {
   try {
@@ -3633,6 +3635,9 @@ function handlePlaylistUpdate(data) {
     if (stage) stage.style.background = data.background_color;
     document.body.style.background = data.background_color;
   }
+  const prevDefault = defaultContent && defaultContent.content_rev;
+  defaultContent = data.default_content && typeof data.default_content === "object" ? data.default_content : null;
+  if ((defaultContent && defaultContent.content_rev) !== prevDefault) _defaultShownRev = null;
   if (data.orientation) {
     if (BS && typeof BS.setOrientation === "function" && BS.hasHost()) {
       BS.setOrientation(effectiveOrientation).then((rotatedByHost) => {
@@ -3772,8 +3777,10 @@ function handlePlaylistUpdate(data) {
   deferredRotation = false;
   deferredSuccessorId = null;
   if (playlist.length === 0) {
-    teardownCurrentMedia();
-    showStatus("Waiting for content...");
+    if (!renderDefaultContent()) {
+      teardownCurrentMedia();
+      showStatus("Waiting for content...");
+    }
     isPlaying = false;
     return;
   }
@@ -3881,9 +3888,32 @@ function clearLookahead() {
   lookaheadFrom = null;
   lookaheadIdx = -1;
 }
-function showNothingScheduled() {
+function renderDefaultContent() {
+  const dc = defaultContent;
+  if (!dc || typeof dc.mime_type !== "string" || !dc.mime_type.startsWith("image/")) return false;
+  const container = document.getElementById("playerContainer");
+  const key = dc.content_rev || dc.content_id || dc.remote_url || dc.filepath;
+  if (_defaultShownRev === key && container && container.querySelector("img[data-st-default]")) return true;
   teardownCurrentMedia();
-  showStatus(_t("nothing_scheduled"));
+  const img = document.createElement("img");
+  img.setAttribute("data-st-default", "1");
+  img.style.cssText = "width:100%;height:100%;object-fit:contain";
+  img.onerror = () => {
+    _defaultShownRev = null;
+  };
+  img.src = mediaUrl(dc);
+  if (container) {
+    container.style.display = "block";
+    container.appendChild(img);
+  }
+  _defaultShownRev = key;
+  return true;
+}
+function showNothingScheduled() {
+  if (!renderDefaultContent()) {
+    teardownCurrentMedia();
+    showStatus(_t("nothing_scheduled"));
+  }
   isPlaying = false;
   clearTimeout(scheduleRetryTimer);
   scheduleRetryTimer = setTimeout(() => {
@@ -3918,7 +3948,7 @@ function playCurrentItem() {
     teardownCurrentMedia();
     stopSlideVo();
     stopSlideBed();
-    showStatus("Waiting for content...");
+    if (!renderDefaultContent()) showStatus("Waiting for content...");
     isPlaying = false;
     return;
   }

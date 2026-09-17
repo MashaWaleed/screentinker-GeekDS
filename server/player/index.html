@@ -565,7 +565,10 @@
       try {
         const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
         if (!sw) return;
-        const all = (items || []).concat(extraItems || []);
+        // Pin the device default image too, so it still shows during an off-hours WAN outage (the
+        // exact scenario it exists for). A local (filepath) default is cached; a remote_url default
+        // cannot be and simply will not show offline.
+        const all = (items || []).concat(extraItems || [], defaultContent ? [defaultContent] : []);
         const urls = all
           .filter((it) => it && it.filepath && !it.remote_url)
           .map((it) => mediaUrl(it));
@@ -610,6 +613,12 @@
      * once by a `let` read above its declaration (1.9.32), which is why that sentence is here.
      */
     let triggers = loadTriggersCache();
+    // Device default/standby content (a fallback image), shown when the screen would otherwise be
+    // idle: no playlist, or a playlist whose every item is filtered out by its schedule (off times).
+    // Set from the payload's top-level default_content; null = none (keep the idle text). Declared
+    // with the top-level state because a cold-start idle path can read it before Boot finishes.
+    let defaultContent = null;
+    let _defaultShownRev = null;   // content_rev currently mounted as the default image, or null
     /*
      * Listener settings, cached for the same reason the definitions are: a player that has to reach
      * a server before it can accept a trigger has already failed the offline promise. Defaults are
@@ -4546,6 +4555,11 @@
         if (stage) stage.style.background = data.background_color;
         document.body.style.background = data.background_color;
       }
+      // Device default/standby content (top-level, like background_color). If the currently-shown
+      // idle default changed, drop the marker so the idle path re-mounts the new one.
+      const prevDefault = defaultContent && defaultContent.content_rev;
+      defaultContent = (data.default_content && typeof data.default_content === 'object') ? data.default_content : null;
+      if ((defaultContent && defaultContent.content_rev) !== prevDefault) _defaultShownRev = null;
       if (data.orientation) {
         // On BrightSign, rotate the OUTPUT first. Video decodes onto a hardware plane the DOM
         // cannot transform, so the CSS rotation below turns the images and widgets and leaves the
@@ -4799,8 +4813,8 @@
       deferredSuccessorId = null;
 
       if (playlist.length === 0) {
-        teardownCurrentMedia();
-        showStatus('Waiting for content...');
+        // No playlist assigned / empty: the device default image if set, else the idle text.
+        if (!renderDefaultContent()) { teardownCurrentMedia(); showStatus('Waiting for content...'); }
         isPlaying = false;
         return;
       }
@@ -4935,11 +4949,30 @@
       return idx;
     }
     function clearLookahead() { lookaheadFrom = null; lookaheadIdx = -1; }
-    // Every item filtered out: show the idle screen and re-check shortly (a daypart
-    // may begin). Re-evaluated at item boundaries otherwise, per the locked design.
-    function showNothingScheduled() {
+    // The device default/standby image, mounted when the screen would otherwise be idle. Returns
+    // true if it rendered it (so the caller skips the idle text). IDEMPOTENT: if the same default is
+    // already on screen it leaves it in place, so the 30s idle re-check does not re-mount / flicker.
+    // Only an image is a valid standby; anything else (or none) falls back to the idle text.
+    function renderDefaultContent() {
+      const dc = defaultContent;
+      if (!dc || typeof dc.mime_type !== 'string' || !dc.mime_type.startsWith('image/')) return false;
+      const container = document.getElementById('playerContainer');
+      const key = dc.content_rev || dc.content_id || dc.remote_url || dc.filepath;
+      if (_defaultShownRev === key && container && container.querySelector('img[data-st-default]')) return true;
       teardownCurrentMedia();
-      showStatus(_t('nothing_scheduled'));
+      const img = document.createElement('img');
+      img.setAttribute('data-st-default', '1');
+      img.style.cssText = 'width:100%;height:100%;object-fit:contain';   // letterbox on the device background
+      img.onerror = () => { _defaultShownRev = null; };   // a broken default falls back to idle text next re-check
+      img.src = mediaUrl(dc);
+      if (container) { container.style.display = 'block'; container.appendChild(img); }
+      _defaultShownRev = key;
+      return true;
+    }
+    // Every item filtered out: show the device default image (LED-wall off-times) or the idle screen,
+    // and re-check shortly (a daypart may begin). Re-evaluated at item boundaries otherwise.
+    function showNothingScheduled() {
+      if (!renderDefaultContent()) { teardownCurrentMedia(); showStatus(_t('nothing_scheduled')); }
       isPlaying = false;
       clearTimeout(scheduleRetryTimer);
       scheduleRetryTimer = setTimeout(() => {
@@ -4963,7 +4996,8 @@
         // nothing to show would sit there playing music to an empty stage.
         stopSlideVo();
         stopSlideBed();
-        showStatus('Waiting for content...');
+        // No playlist / empty playlist: show the device default image if set, else the idle text.
+        if (!renderDefaultContent()) showStatus('Waiting for content...');
         isPlaying = false;
         return;
       }
