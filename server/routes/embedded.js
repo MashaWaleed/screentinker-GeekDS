@@ -69,6 +69,15 @@ function resolveAuth(req, res, next) {
     // API token path (preview / dashboard use)
     return bearerAuth(req, res, (err) => {
       if (err) return next(err);
+      // This router was mounted outside the PUBLIC_ROUTERS bearerAuth+tokenScopeGate loop (it also
+      // takes device tokens), so it never applied a scope gate. Every route here is a device-content
+      // READ, so only read-ladder tokens (read/write/full) qualify. 'agency' (publish to designated
+      // playlists) and 'billing:read' (global billing read) are off-ladder narrow grants and must not
+      // be able to read arbitrary device renders in their bound workspace.
+      const READ_LADDER = new Set(['read', 'write', 'full']);
+      if (req.viaToken && !READ_LADDER.has(req.tokenScope)) {
+        return res.status(403).json({ error: `API token scope '${req.tokenScope}' cannot read device content` });
+      }
       resolveTenancy(req, res, next);
     });
   }

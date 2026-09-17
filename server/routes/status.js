@@ -9,6 +9,21 @@ const config = require('../config');
 const { sixDigitCode } = require('../lib/numeric-code');
 const VERSION = require('../version');
 const { PLATFORM_ROLES, resolveSessionUser } = require('../middleware/auth');
+const { accessContext, firstAccessibleWorkspace } = require('../lib/tenancy');
+
+// The JWT's current_workspace_id is a stored claim. Import and export resolve the session themselves
+// (they do not run behind resolveTenancy), so they must RE-VALIDATE that claim against current
+// membership: a user removed from a workspace still holds a JWT naming it, and must not be able to
+// import into it or export its branding. Mirrors resolveTenancy's discard-if-stale, then falls back
+// to the user's first accessible workspace.
+function sessionWorkspaceId(userId, role, jwtWorkspaceId) {
+  if (jwtWorkspaceId) {
+    const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(jwtWorkspaceId);
+    if (ws && accessContext(userId, role, ws)) return jwtWorkspaceId;
+  }
+  const first = firstAccessibleWorkspace(userId);
+  return first ? first.id : null;
+}
 const { INLINE_SAFE_EXTS } = require('../lib/upload-sniff');
 const { digestFileSync, isDigestName } = require('../lib/content-digest');
 const loopLag = require('../services/loop-lag');
@@ -146,7 +161,8 @@ router.get('/export', (req, res) => {
     // For a break-glass identity this is the synthetic recovery id, which has no users
     // row - the lookup below then 404s exactly as the inline verify did before.
     userId = session.user.id;
-    workspaceId = session.decoded.current_workspace_id || null;
+    // Re-validate the JWT's workspace claim against current membership (stale-access), then fall back.
+    workspaceId = sessionWorkspaceId(session.user.id, session.user.role, session.decoded.current_workspace_id || null);
     if (!userId) return res.status(401).json({ error: 'Invalid token' });
   } catch (err) {
     if (err.code === 'user_not_found') return res.status(404).json({ error: 'User not found' });
@@ -157,17 +173,6 @@ router.get('/export', (req, res) => {
   // resolver doesn't select).
   const user = db.prepare('SELECT id, email, name, role, auth_provider, plan_id, created_at FROM users WHERE id = ?').get(userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
-
-  // Phase 2.2f: export workspace-scoped branding. Fall back to first-accessible
-  // workspace if the JWT didn't carry one.
-  if (!workspaceId) {
-    const w = db.prepare(`
-      SELECT w.id FROM workspaces w
-      JOIN workspace_members wm ON wm.workspace_id = w.id
-      WHERE wm.user_id = ? ORDER BY wm.joined_at ASC LIMIT 1
-    `).get(userId);
-    workspaceId = w?.id || null;
-  }
 
   const devices = db.prepare('SELECT id, name, status, ip_address, android_version, app_version, screen_width, screen_height, created_at FROM devices WHERE user_id = ?').all(userId);
   const deviceIds = devices.map(d => d.id);
@@ -284,24 +289,15 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
     // for it, so the route 404'd. Preserve that.
     if (session.viaRecovery) return res.status(404).json({ error: 'User not found' });
     userId = session.user.id;
-    workspaceId = session.decoded.current_workspace_id || null;
+    // Import WRITES into the workspace and can overwrite its branding, so re-validate the JWT's
+    // workspace claim against current membership (stale-access) rather than trusting it, then fall back.
+    workspaceId = sessionWorkspaceId(session.user.id, session.user.role, session.decoded.current_workspace_id || null);
     if (!userId) return res.status(401).json({ error: 'Invalid token' });
   } catch (err) {
     if (err.code === 'user_not_found') return res.status(404).json({ error: 'User not found' });
     return denySession(res, err);
   }
 
-  // Phase 2.2b: imports stamp workspace_id on devices and content so the
-  // rows are visible to the workspace-filtered list endpoints. Fall back to
-  // the importer's first accessible workspace if the JWT didn't carry one.
-  if (!workspaceId) {
-    const w = db.prepare(`
-      SELECT w.id FROM workspaces w
-      JOIN workspace_members wm ON wm.workspace_id = w.id
-      WHERE wm.user_id = ? ORDER BY wm.joined_at ASC LIMIT 1
-    `).get(userId);
-    workspaceId = w?.id || null;
-  }
   if (!workspaceId) return res.status(403).json({ error: 'No workspace context for import. Switch to a workspace first.' });
 
   let data;

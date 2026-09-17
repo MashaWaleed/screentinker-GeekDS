@@ -6,7 +6,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2h: workspace-aware access. Templates (is_template=1) are the
 // platform-shared pair (NULL user_id, NULL workspace_id) and are visible
 // everywhere, writable only by platform_admin.
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 
 // List layouts in the caller's current workspace plus all templates.
 // Phase 2.2h: workspace-scoped. Templates (is_template=1) remain visible to
@@ -110,6 +110,8 @@ router.post('/', (req, res) => {
   if (!is_template && !req.workspaceId) {
     return res.status(400).json({ error: 'Workspace ID is required' });
   }
+  // A read-only member cannot create an owned layout (a template already needs platform_admin above).
+  if (!is_template && denyReadOnly(req, res)) return;
 
   const id = uuidv4();
   const w = width || 1920;
@@ -351,6 +353,7 @@ router.delete('/:id/zones/:zoneId', (req, res) => {
 // destination lands in the caller's current workspace.
 router.post('/:id/duplicate', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before duplicating a layout.' });
+  if (denyReadOnly(req, res)) return;
   const source = checkLayoutRead(req, res);
   if (!source) return;
 

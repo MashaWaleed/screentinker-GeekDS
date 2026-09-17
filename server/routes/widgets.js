@@ -8,7 +8,7 @@ const { devicesPlayingWidget } = require('../lib/devices-playing');
 const slideRender = require('../lib/slide-render');
 const appConfig = require('../config');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 const { isRealTimezone } = require('../lib/device-timezone');
 const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
 const pluginRegistry = require('../lib/plugins/registry');
@@ -149,6 +149,7 @@ router.get('/', (req, res) => {
 // Create widget in the caller's current workspace.
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating widgets.' });
+  if (denyReadOnly(req, res)) return;   // a read-only member cannot create (PUT/DELETE use checkWidgetWrite)
   const { widget_type, name, config } = req.body;
   if (!widget_type || !name) return res.status(400).json({ error: 'widget_type and name required' });
   if (!pluginRegistry.isAcceptedWidgetType(widget_type)) {
