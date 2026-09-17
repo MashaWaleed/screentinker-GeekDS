@@ -55,6 +55,8 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: token-scope and stale-membership gaps.** Four workspace-scoping fixes from the review. The embedded (e-ink) device-content router was mounted outside the API-token scope gate, so an `agency` or `billing:read` token could read a device's rendered content in its workspace; it now accepts only read-ladder tokens. Workspace export and import trusted the JWT's `current_workspace_id` without re-checking membership, so a user removed from a workspace but still holding a token could export its branding or import into it and overwrite its branding; both now re-validate the claim against current access. A schedule PUT could set a `zone_id` belonging to another workspace's layout (POST already checked); it now validates it. And a content upload accepted a `folder_id` from another workspace (edit and batch-move already checked); it now validates it. None is cross-tenant data disclosure.
+
 **Data-source `play_when` gating and custom shader transitions work on live devices again.** The
 device payload query left `workspace_id` out of its column list, so the value passed on to the
 payload builder was always null and the two features that key off it (an item that plays only when a
