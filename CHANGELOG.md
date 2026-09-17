@@ -65,6 +65,14 @@ could point content at `169.254.169.254`, `127.0.0.1`, or a LAN service and have
 snapshot every device pulls. The two image fetches now go through `guardedRequest` (vet + socket-pin +
 redirect re-vet), the Chromium page render vets every request it makes and aborts any to a
 private/reserved address, and a known non-image URL skips the image probe entirely.
+**Security: a read-only member could reach live screens (slide decks + agency tokens).** Two authorization gaps let a `workspace_viewer` perform writes the role is meant to forbid. Slide decks had no read-only gate: a viewer could create, edit, PUBLISH (which builds slide widgets and a playlist and pushes a playlist-update to every screen) and delete decks. And `POST /api/tokens` gated only on workspace membership, so a viewer could mint an `agency` token with auto-publish and push content to live signage through the agency surface, which does not re-check the owner's role. A viewer is now denied deck writes/publish/delete (matching playlists and schedules) and may mint only a read-scoped token.
+**Security: a non-string widget config value could bypass HTML escaping.** `escapeHtml` returned a
+non-string argument unchanged, so a widget `config` field set to a JSON array/object (weather
+`location`, social `platform`/`query`, rss `feed_url`) reached the render output unescaped and was
+string-coerced there, which for the rss JS-string context meant arbitrary script in the widget
+document. Non-`slide` widget config is not normalized, so the array reached the sink intact. Fixed by
+coercing with `String()` before escaping, matching the slide renderer. These are the escaped
+built-in widgets whose only defense is this escaping.
 
 **Schedule and play-window edits now tell you they need a Publish.** Setting a play window on an item
 (`play_from` / `play_until`) saved silently, so it was easy to set a time frame, see nothing change on
@@ -85,6 +93,14 @@ cover could not resolve (an SVG logo/wordmark used as a background, or a raster 
 had loaded). A branded background showed a column of repeated marks down one edge, and because the
 slide iframe is rebuilt every cycle it reappeared on each reload. Pinned `background-repeat:no-repeat`
 on the background layer; cover never wants tiling.
+
+**Harden a live slide element (clock/date/countdown) against old-WebView repaint ghosting.** On some
+older Android System WebViews a live element that rewrites its text every second composites the new
+glyphs over the old without clearing, so they smear into a repeated ghost column (a room-sign clock
+whose minutes appeared to "repeat down the edge"). Each live element is now pinned to its own
+compositing layer (`translateZ(0)`, an identity transform) so the WebView re-rasterises it cleanly
+each frame. This could not be reproduced on a current WebView in-house, so it is a defensive fix for
+old field panels; where a panel still shows it, updating the panel's System WebView is the real remedy.
 
 ## 2.1.1 (2026-09-16)
 

@@ -59,3 +59,20 @@ test('valid color/gradient backgrounds are preserved', async () => {
   assert.ok(html.includes('linear-gradient(45deg, #ff0000, #00ff00)'), 'legit gradient preserved');
   assert.ok(html.includes('color:#3B82F6'), 'legit hex color preserved');
 });
+
+// A widget config field that is a JSON ARRAY/OBJECT (never normalized for non-slide widgets) used to
+// slip past escapeHtml, which returned non-strings unchanged; the surrounding template then
+// string-coerced it, unescaped. escapeHtml now String()-coerces first.
+test('social widget: an ARRAY config field cannot inject markup (non-string escape bypass)', async () => {
+  seed('social1', 'social', { platform: ['<img src=x onerror=alert(document.domain)>'], query: '#ok' });
+  const html = await render('social1');
+  assert.ok(!/<img src=x onerror=/.test(html), 'array value must not reach the document as raw markup');
+  assert.ok(html.includes('&lt;img src=x onerror='), 'it must land as escaped characters instead');
+});
+
+test('rss widget: an ARRAY feed_url cannot break out of the JS string (non-string escape bypass)', async () => {
+  seed('rss2', 'rss', { feed_url: ["');alert(document.domain);//"] });
+  const html = await render('rss2');
+  assert.ok(!html.includes("');alert(document.domain)"), 'unescaped quote must not break the JS string context');
+  assert.ok(html.includes('&#39;'), 'the quote is escaped, so the payload is inert data');
+});
