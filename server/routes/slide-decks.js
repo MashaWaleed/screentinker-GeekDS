@@ -52,7 +52,7 @@ function present(deck) {
     created_at: deck.created_at,
     updated_at: deck.updated_at,
     doc,
-    warnings: deckLib.deckWarnings(doc, voDurations(doc)),
+    warnings: deckLib.deckWarnings(doc, voDurations(doc, deck.workspace_id)),
   };
 }
 
@@ -65,14 +65,17 @@ function present(deck) {
  * `duration_sec` is null for anything never probed (an image, an upload ffprobe could not read), and
  * those ids are simply absent from the map — the lint stays quiet rather than guessing.
  */
-function voDurations(doc) {
+function voDurations(doc, workspaceId) {
   const ids = [...new Set((doc.slides || [])
     .map((s) => s.template && s.template.audio && s.template.audio.vo)
     .filter((id) => typeof id === 'string' && id))];
-  if (!ids.length) return {};
+  if (!ids.length || !workspaceId) return {};
+  // Scope to the deck's workspace: a vo id sits in a doc the editor authored, so a foreign content
+  // UUID could otherwise probe another workspace's content existence and coarse duration via the
+  // deck warnings.
   const rows = db.prepare(
-    `SELECT id, duration_sec FROM content WHERE duration_sec IS NOT NULL AND id IN (${ids.map(() => '?').join(',')})`
-  ).all(...ids);
+    `SELECT id, duration_sec FROM content WHERE duration_sec IS NOT NULL AND workspace_id = ? AND id IN (${ids.map(() => '?').join(',')})`
+  ).all(workspaceId, ...ids);
   return Object.fromEntries(rows.map((r) => [r.id, r.duration_sec]));
 }
 
