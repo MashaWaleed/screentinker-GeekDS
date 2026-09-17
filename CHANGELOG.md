@@ -55,6 +55,16 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: the e-ink/embedded renderer no longer makes unguarded server-side fetches (SSRF).** When
+a device's content is a remote URL, the embedded snapshot renderer fetches it on the server. Three of
+those paths bypassed the SSRF guard the media proxy and data-source fetcher already use: the native
+layout renderer fetched a zone's URL with no vetting at all, and the remote-image and remote-page
+paths vetted once then fetched with an unpinned client, so a hostname that resolves to a private
+address at connect time, or a public URL that redirects to one, reached them. Any workspace editor
+could point content at `169.254.169.254`, `127.0.0.1`, or a LAN service and have it rendered into a
+snapshot every device pulls. The two image fetches now go through `guardedRequest` (vet + socket-pin +
+redirect re-vet), the Chromium page render vets every request it makes and aborts any to a
+private/reserved address, and a known non-image URL skips the image probe entirely.
 **Security: a read-only member could reach live screens (slide decks + agency tokens).** Two authorization gaps let a `workspace_viewer` perform writes the role is meant to forbid. Slide decks had no read-only gate: a viewer could create, edit, PUBLISH (which builds slide widgets and a playlist and pushes a playlist-update to every screen) and delete decks. And `POST /api/tokens` gated only on workspace membership, so a viewer could mint an `agency` token with auto-publish and push content to live signage through the agency surface, which does not re-check the owner's role. A viewer is now denied deck writes/publish/delete (matching playlists and schedules) and may mint only a read-scoped token.
 **Security: a non-string widget config value could bypass HTML escaping.** `escapeHtml` returned a
 non-string argument unchanged, so a widget `config` field set to a JSON array/object (weather
