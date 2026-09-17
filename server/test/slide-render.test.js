@@ -234,6 +234,23 @@ test('a background photo renders under the elements, from a content reference', 
   assert.match(html, /background-size:cover/);
 });
 
+test('⚠️ the background is no-repeat, so a logo/SVG background never tiles down the stage', () => {
+  /*
+   * Field report: a branded background (a "VIEW" wordmark dropped in as the slide background) showed
+   * a column of ~7 repeated marks down one edge, intermittently, resetting on each 30s slide reload.
+   * Cause: `.bg` set background-size:cover but not background-repeat, so the CSS default `repeat`
+   * tiled any image whose intrinsic size cover could not resolve (an SVG, or a raster before its
+   * dimensions loaded — the per-reload iframe rebuild reopened that window every cycle). cover never
+   * wants tiling; the rule must pin it off.
+   */
+  const html = S.renderSlideHtml({
+    template: { background_content_id: 'c1', elements: [] }, fields: {},
+  }, { resolveImage: () => '/uploads/content/logo.svg' });
+  const bg = html.match(/\.bg \{[^}]*\}/);
+  assert.ok(bg, '.bg rule present');
+  assert.match(bg[0], /background-repeat:\s*no-repeat/, 'the background must not tile');
+});
+
 test('⚠️ the dim is a scrim BETWEEN the photo and the text, not a filter on either', () => {
   /*
    * The readability problem this exists for: an operator's photo is whatever they had, its contrast
