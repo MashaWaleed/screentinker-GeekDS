@@ -55,6 +55,20 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Discarding a draft no longer strips per-item schedules.** A discard rebuilt the playlist's items
+from the published version but dropped their per-item schedule blocks (dayparting and validity): the
+published structure never captured them and the re-insert never wrote them, so discarding an unrelated
+draft edit silently removed the schedules from every item. Publish now captures the blocks into the
+structure, and discard restores them.
+
+**Bulk actions are safer, and an embedded panel's cursor stops drifting.** The bulk duplicate action
+ran its inserts without a transaction, so a mid-batch failure left a half-duplicated selection; it is
+now atomic like every other bulk action. Paste also accepted a schedule block with no days (stored as
+a block that never plays); it now requires at least one day, matching the normal editor. And an
+embedded e-ink panel's playlist cursor no longer advances as a side effect of a metadata poll or a
+dashboard preview, only a real device render moves it, so a monitor polling the info endpoint can no
+longer make a panel skip an item.
+
 **Data-source `play_when` gating and custom shader transitions work on live devices again.** The
 device payload query left `workspace_id` out of its column list, so the value passed on to the
 payload builder was always null and the two features that key off it (an item that plays only when a
