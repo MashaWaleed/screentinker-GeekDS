@@ -68,6 +68,13 @@ evaluates as never active, so the item silently vanished instead of playing, the
 message pointing at the overnight-window form (make the end earlier than the start, or use 24:00 for
 "until midnight").
 
+**A slide background image no longer tiles.** The slide background layer set `background-size:cover`
+but never set `background-repeat`, so the CSS default of repeat tiled any image whose intrinsic size
+cover could not resolve (an SVG logo/wordmark used as a background, or a raster before its dimensions
+had loaded). A branded background showed a column of repeated marks down one edge, and because the
+slide iframe is rebuilt every cycle it reappeared on each reload. Pinned `background-repeat:no-repeat`
+on the background layer; cover never wants tiling.
+
 ## 2.1.1 (2026-09-16)
 
 ### Added

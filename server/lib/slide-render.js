@@ -1003,7 +1003,12 @@ function renderSlideHtml(rawConfig, opts = {}) {
            background:${slide.background}; container-type:size; }
   .e { position:absolute; }
   /* Both fill the stage and sit beneath every element, in source order: photo, then scrim. */
-  .bg { position:absolute; top:0; right:0; bottom:0; left:0; background-size:cover; background-position:center; }
+  /* no-repeat matters: background-size:cover cannot compute a cover scale for an image with no
+     intrinsic size (an SVG logo/wordmark, or an image whose dimensions have not loaded yet), and
+     the CSS default of repeat then tiles it down the stage. A branded background dropped in as a
+     logo therefore showed a column of repeated marks until (and only until) the intrinsic size
+     resolved. Cover never wants tiling, so pin it off. */
+  .bg { position:absolute; top:0; right:0; bottom:0; left:0; background-size:cover; background-position:center; background-repeat:no-repeat; }
   /* A video background fills the frame the way the still does, and is never letterboxed. */
   video.bg { width:100%; height:100%; object-fit:cover; display:block; }
   .scrim { position:absolute; top:0; right:0; bottom:0; left:0; }
