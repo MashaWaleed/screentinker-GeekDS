@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.1.2 (2026-09-17)
+
 ### Added
 
 **Live TV / IPTV as a playlist item.** Add a **live stream** in the content library: an HLS

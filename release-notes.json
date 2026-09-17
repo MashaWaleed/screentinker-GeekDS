@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "2.1.2",
+      "date": "2026-09-17",
+      "notes": [
+        "Add a live TV / IPTV channel to a playlist by pasting an HLS (.m3u8) URL. The stream goes straight from your source to the screen, so it works with in-house and hotel IPTV on your local network. On the native Android player you can also add an RTSP camera or NVR feed directly.",
+        "Tag files in your library and set a playlist to play in order, shuffle, or weighted random. Shuffle never repeats an item until the whole list has played, and weighting lets some items come up more often.",
+        "A device's Default / standard image now actually shows when there is nothing to play, instead of the screen going black. Set it under Device settings and it also appears offline.",
+        "The slide editor no longer replays the entrance animation every time you switch slides, so you can grab and arrange elements right away. The entrance still plays when you click Play entrance.",
+        "Security hardening across custom widgets, embedded web pages, API token permissions, read-only members, and two-factor recovery codes."
+      ]
+    },
+    {
       "version": "2.1.1",
       "date": "2026-09-16",
       "notes": [
