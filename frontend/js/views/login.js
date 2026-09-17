@@ -170,7 +170,7 @@ export async function render(container) {
             <div class="form-group">
               <label>${t('auth.mfa_code_label')}</label>
               <input type="text" id="mfaCode" class="input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false"
-                     placeholder="123456" maxlength="12" style="letter-spacing:6px;text-align:center;font-family:monospace;font-size:18px">
+                     placeholder="123456" maxlength="40" style="letter-spacing:6px;text-align:center;font-family:monospace;font-size:18px">
             </div>
             <button class="btn btn-primary" id="mfaVerifyBtn" style="width:100%;justify-content:center;padding:10px">${t('auth.mfa_verify')}</button>
             <button class="btn btn-secondary" id="mfaBackBtn" style="width:100%;justify-content:center;padding:10px;margin-top:8px">${t('auth.back_to_signin')}</button>

@@ -839,7 +839,7 @@ export async function render(container) {
       box.innerHTML = `
         <p style="${muted};margin-bottom:6px">${prompt}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input type="text" id="twoFactorActionCode" class="input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="${t('settings.2fa_code_placeholder')}" maxlength="12" style="max-width:170px;letter-spacing:3px;text-align:center;font-family:monospace">
+          <input type="text" id="twoFactorActionCode" class="input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="${t('settings.2fa_code_placeholder')}" maxlength="40" style="max-width:170px;letter-spacing:3px;text-align:center;font-family:monospace">
           <button class="btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}" id="twoFactorActionConfirm">${confirm}</button>
           <button class="btn btn-secondary btn-sm" id="twoFactorActionCancel">${t('settings.2fa_cancel')}</button>
         </div>`;

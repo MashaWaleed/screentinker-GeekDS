@@ -55,6 +55,13 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: TOTP recovery codes are now 128-bit, and older codes keep working.** Recovery codes were
+40-bit (5 random bytes) stored as an unsalted SHA-256, which is brute-forceable offline if that table
+ever leaked. New codes are 128-bit (16 bytes, shown grouped in fours for legibility). No one is locked
+out: verification hashes whatever the user types and looks the hash up, so a pre-existing 40-bit code
+still matches its stored hash, and only newly issued codes (at setup or a manual regenerate) are
+longer. The two-factor input fields were widened so the longer code can be entered.
+
 **Security: a widget colour/background value can no longer beacon to an external URL.** `safeCss`
 blocked `url(...)` but not the other CSS functions that fetch a resource without that token, so a
 value like `image-set("//host/beacon.png" 1x)` passed and loaded the URL when the widget rendered
