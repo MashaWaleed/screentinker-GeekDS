@@ -75,6 +75,14 @@ had loaded). A branded background showed a column of repeated marks down one edg
 slide iframe is rebuilt every cycle it reappeared on each reload. Pinned `background-repeat:no-repeat`
 on the background layer; cover never wants tiling.
 
+**Harden a live slide element (clock/date/countdown) against old-WebView repaint ghosting.** On some
+older Android System WebViews a live element that rewrites its text every second composites the new
+glyphs over the old without clearing, so they smear into a repeated ghost column (a room-sign clock
+whose minutes appeared to "repeat down the edge"). Each live element is now pinned to its own
+compositing layer (`translateZ(0)`, an identity transform) so the WebView re-rasterises it cleanly
+each frame. This could not be reproduced on a current WebView in-house, so it is a defensive fix for
+old field panels; where a panel still shows it, updating the panel's System WebView is the real remedy.
+
 ## 2.1.1 (2026-09-16)
 
 ### Added
