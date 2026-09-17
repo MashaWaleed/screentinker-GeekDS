@@ -349,6 +349,12 @@ test('disabled plugin is not required', () => {
 test('widget sanitizers reject CSS breakout', () => {
   assert.equal(safeCss('red', 'x'), 'red');
   assert.equal(safeCss('}</style><script>', 'x'), 'x');
+  // A legit gradient/colour is kept; a URL-fetching CSS function (no url( token) is rejected.
+  assert.equal(safeCss('linear-gradient(45deg, #ff0000, #00ff00)', 'x'), 'linear-gradient(45deg, #ff0000, #00ff00)');
+  assert.equal(safeCss('image-set("//attacker.example/beacon.png" 1x)', 'x'), 'x');
+  assert.equal(safeCss('-webkit-image-set(url(x) 1x)', 'x'), 'x');
+  assert.equal(safeCss('cross-fade(url(a), url(b))', 'x'), 'x');
+  assert.equal(safeCss('image("//attacker.example/b.png")', 'x'), 'x');
   assert.equal(safeUrl('javascript:alert(1)'), 'about:blank');
   assert.equal(safeUrl('https://example.com'), 'https://example.com');
   assert.equal(escapeHtml('<b>'), '&lt;b&gt;');

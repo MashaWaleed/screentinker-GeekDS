@@ -55,6 +55,14 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: a widget colour/background value can no longer beacon to an external URL.** `safeCss`
+blocked `url(...)` but not the other CSS functions that fetch a resource without that token, so a
+value like `image-set("//host/beacon.png" 1x)` passed and loaded the URL when the widget rendered
+(a tracking beacon or render confirmation, no script). Blocked `image-set()`, `image()`,
+`cross-fade()`, `paint()` and `element()` (and their prefixed forms); legitimate colours and
+gradients are unaffected. Also scoped a slide deck's voiceover-duration lookup to the deck's own
+workspace, so its warnings can no longer probe whether a content id in another workspace exists.
+
 **Data-source `play_when` gating and custom shader transitions work on live devices again.** The
 device payload query left `workspace_id` out of its column list, so the value passed on to the
 payload builder was always null and the two features that key off it (an item that plays only when a

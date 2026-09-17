@@ -40,6 +40,13 @@ function safeUrl(url) {
 function safeCss(v, fallback) {
   if (typeof v !== 'string') return fallback;
   if (/[<>{}\\;]/.test(v) || /url\s*\(/i.test(v) || /@import/i.test(v) || /expression/i.test(v) || /javascript:/i.test(v)) return fallback;
+  // Other CSS functions that fetch an external URL without the `url(` token, which the check above
+  // would otherwise miss: image-set()/image()/cross-fade() load a resource (a value like
+  // `image-set("//attacker/beacon.png" 1x)` passes as a background and beacons on render); paint()/
+  // element() reference a worklet/element. -webkit- prefixed image-set/cross-fade contain the same
+  // token, so they are caught too. Blocked to keep safeCss's "no exfil" contract.
+  if (/image-set\s*\(/i.test(v) || /cross-fade\s*\(/i.test(v) || /\bimage\s*\(/i.test(v)
+      || /\bpaint\s*\(/i.test(v) || /\belement\s*\(/i.test(v)) return fallback;
   return v.trim().slice(0, 200);
 }
 function safeNumber(v, fallback) {
