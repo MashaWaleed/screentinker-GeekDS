@@ -107,7 +107,7 @@ test('#336: the device query that feeds the payload actually selects background_
       id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
-      trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
+      trigger_multicast_group TEXT, trigger_clear_all_token TEXT, default_content_id TEXT,
       capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT,
       playlist_id TEXT, layout_id TEXT
     );
@@ -129,4 +129,27 @@ test('#336: the fullscreen video and widget surfaces no longer paint their own b
   // stage colour for every video that does not fill the frame. Wall tiles keep fill+black.
   assert.doesNotMatch(player, /object-fit:contain;background:#000/, 'a contain-fitted video must not carry an opaque black');
   assert.doesNotMatch(player, /border:none;background:#000'/, 'the widget iframe must not carry an opaque black');
+});
+
+/*
+ * Default content (off-hours fallback image). `default_content_id` was a stored-but-dead device
+ * setting: saved in the DB, never sent to any player, never rendered. A screen with no playlist,
+ * or whose only item is outside its schedule window, went black. These lock in the wiring so it
+ * stays a real feature: the device SELECT reads the column, the payload carries a resolved
+ * `default_content` object, and the player renders it when it would otherwise show idle text.
+ */
+test('default_content: device SELECT reads default_content_id and payload carries the object', () => {
+  const ds = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
+  assert.match(ds, /d\.default_content_id/, 'the device SELECT must read default_content_id');
+  assert.match(ds, /if \(device\?\.default_content_id\)/, 'payload resolves default_content only when one is set');
+  assert.match(ds, /FROM content WHERE id = \?/, 'default_content is resolved from the content row');
+  assert.match(ds, /default_content: default_content \|\| null/, 'assembled payload carries default_content (null when unset)');
+});
+
+test('default_content: the web player reads it and renders it when idle', () => {
+  const player = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'), 'utf8');
+  assert.match(player, /data\.default_content/, 'the player reads the top-level field');
+  assert.match(player, /function renderDefaultContent\(\)/, 'the player has an idle-fallback renderer');
+  // it must be consulted on the "nothing to show" paths, not just declared
+  assert.match(player, /if \(!renderDefaultContent\(\)\)/, 'idle paths try the default image before falling back to status text');
 });

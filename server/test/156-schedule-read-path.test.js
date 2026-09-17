@@ -193,3 +193,27 @@ test('unchanged editor save does NOT wipe an existing schedule', async () => {
   assert.equal(after.schedules[0].start, '00:00');
   assert.equal(after.schedules[0].end, '24:00');
 });
+
+// ---------------------------------------------------------------------------
+// 4. ZERO-LENGTH GUARD — a block whose start == end evaluates as NEVER active
+// (blockMatches returns false for every instant), so the item silently vanishes
+// instead of playing in the intended window. That is the mirror-image of the
+// customer's "schedule ignored" report, and just as confusing. The route must
+// reject it (400) rather than store a window that can never fire. An overnight
+// window (start > end) stays valid; use end=24:00 for "until midnight".
+// ---------------------------------------------------------------------------
+test('PUT /schedules rejects a zero-length window (start == end)', async () => {
+  const itemId = await addItem();
+
+  const bad = await putSchedules(itemId, [{ days: [1, 2, 3], start: '09:00', end: '09:00', start_date: null, end_date: null }]);
+  assert.equal(bad.status, 400, 'start == end must be rejected: ' + JSON.stringify(bad.body));
+  assert.match(String(bad.body && bad.body.error), /differ|never plays/i, 'error explains why');
+
+  // nothing was written
+  const it = await loadItem(itemId);
+  assert.equal((it.schedules || []).length, 0, 'a rejected block must not be stored');
+
+  // overnight window (start > end) is still accepted
+  const ok = await putSchedules(itemId, [{ days: [1], start: '22:00', end: '06:00', start_date: null, end_date: null }]);
+  assert.equal(ok.status, 200, 'overnight window stays valid: ' + JSON.stringify(ok.body));
+});

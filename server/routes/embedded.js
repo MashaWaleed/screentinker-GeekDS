@@ -271,9 +271,21 @@ function getPublishedPlaylistItems(playlistId) {
  * @returns {{ item, content, itemIndex, expiresIn, total } | null}
  *   null when no playlist or no items.
  */
+// The device default/standby image as a resolved e-ink item, or null. Shown when the panel would
+// otherwise idle: no playlist, no items, or every item filtered out by its schedule (off times).
+// E-ink renders STILLS only, so a non-image default is ignored (the panel keeps its own idle).
+function defaultResolved(deviceId) {
+  const row = db.prepare('SELECT default_content_id FROM devices WHERE id = ?').get(deviceId);
+  if (!row || !row.default_content_id) return null;
+  const c = db.prepare('SELECT id AS content_id, filename, mime_type, filepath, file_size, remote_url FROM content WHERE id = ?').get(row.default_content_id);
+  if (!c || typeof c.mime_type !== 'string' || !c.mime_type.startsWith('image/')) return null;
+  const item = Object.assign({}, c, { duration_sec: 3600 });
+  return { item, content: item, itemIndex: 0, expiresIn: 3600, total: 1 };
+}
+
 function resolveCurrentItem(deviceId, forceIndex) {
   const { playlist_id } = resolveDeviceContext(deviceId);
-  if (!playlist_id) return null;
+  if (!playlist_id) return defaultResolved(deviceId);
 
   const device = db.prepare('SELECT id, workspace_id, timezone, reported_timezone FROM devices WHERE id = ?').get(deviceId);
   const tz = resolveDeviceTimezone(device);
@@ -285,7 +297,7 @@ function resolveCurrentItem(deviceId, forceIndex) {
   const allows = (it) => it && it.mime_type !== 'video/hls' && it.mime_type !== 'video/rtsp' && ScheduleEval.itemShouldPlay(it, Date.now(), tz);
   const modeRow = db.prepare('SELECT published_playback_order FROM playlists WHERE id = ?').get(playlist_id);
   const mode = (modeRow && modeRow.published_playback_order) || 'sequential';
-  if (!allItems.length) return null;
+  if (!allItems.length) return defaultResolved(deviceId);
 
   const now = Math.floor(Date.now() / 1000);
 
@@ -313,7 +325,7 @@ function resolveCurrentItem(deviceId, forceIndex) {
 
   if (idx < 0 || idx >= allItems.length || elapsed >= duration || !allows(allItems[idx])) {
     const next = PlayOrder.nextIndex(allItems, idx, allows, mode, state);
-    if (next < 0) return null;
+    if (next < 0) return defaultResolved(deviceId);
     idx = next;
     CURSOR_UPSERT.run(deviceId, idx);
     startedAt = now;

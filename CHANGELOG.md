@@ -43,6 +43,31 @@ source of truth. Multi-zone Android and multi-zone e-ink stay sequential; web, T
 webOS (web player), native Android fullscreen, and single-zone e-ink shuffle. The same zoned layout
 therefore shuffles on web/webOS/BrightSign and plays in order on Android and e-ink.
 
+**A device's default image now actually shows when there is nothing to play.** The Default/standard
+image under Device settings (`devices.default_content_id`) was stored but never sent to any player or
+rendered anywhere, so a screen with no playlist, an empty playlist, or a playlist whose only items
+are outside their schedule window went black. It is now resolved into the socket payload
+(`default_content`) and rendered as an idle fallback by the web player, native Android, Tizen, and
+e-ink, instead of a black frame. Image only (a video/URL default is ignored, e-ink included), and the
+local file is pinned for offline so it still appears with the WAN down. This is the supported answer
+to LED-wall off-hours: set a default image instead of building a black-image playlist with a
+timetable. Old players ignore the field and keep showing their idle screen.
+
+### Fixed
+
+**Schedule and play-window edits now tell you they need a Publish.** Setting a play window on an item
+(`play_from` / `play_until`) saved silently, so it was easy to set a time frame, see nothing change on
+the screen, and conclude the timetable was broken when the edit was only a draft. It now shows the
+same "publish the playlist to push it to devices" cue the schedule dialog already gave. The
+draft/published model is unchanged: a screen keeps playing the last published snapshot until you
+Publish, which is why an unpublished schedule looks like "it always plays".
+
+**A zero-length schedule window (start time equal to end time) is now rejected.** Such a block
+evaluates as never active, so the item silently vanished instead of playing, the mirror image of the
+"schedule ignored" report and just as confusing. The editor and the API both refuse it now, with a
+message pointing at the overnight-window form (make the end earlier than the start, or use 24:00 for
+"until midnight").
+
 ## 2.1.1 (2026-09-16)
 
 ### Added

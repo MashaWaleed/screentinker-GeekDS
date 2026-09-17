@@ -150,6 +150,75 @@ class PlaylistController(
     // True while a valid item is rendered on screen — so we NEVER blank it for a pending download.
     private var hasContentOnScreen = false
 
+    /*
+     * Default / standby content: a per-device, per-payload fallback IMAGE the server attaches
+     * top-level as `default_content` (NOT an assignment). Shown ONLY in the two DEFINED idle states —
+     * empty/no playlist, and "every item filtered out by its schedule" (LED-wall off-times) — in
+     * place of the idle text. It is deliberately kept OUT of `items` and the structural fingerprint:
+     * it must never restart playback, never rotate, and never be persisted into a snapshot as an
+     * assignment. Null/absent => behaviour is exactly the old idle text.
+     */
+    private var defaultContent: JSONObject? = null
+    // Guards against re-mounting the standby image on every idle re-check (the 30s daypart re-eval
+    // and the empty-playlist paths all funnel through the emitters below). Reset whenever real
+    // content takes the screen, or the default_content payload changes.
+    private var defaultShowing = false
+    fun setDefaultContent(json: JSONObject?) {
+        // A distinct payload (or a clear) means the standby must be re-mounted on the next idle emit.
+        if ((defaultContent?.toString() ?: "") != (json?.toString() ?: "")) defaultShowing = false
+        defaultContent = json
+    }
+
+    /**
+     * Build a synthetic PlaylistItem from default_content so the standby renders through the SAME
+     * playItem() path as a normal single image (remote_url stream or cached-local file). Returns null
+     * when there is no default, when it is not an image (only images are valid standby content — a
+     * video standby falls back to the idle text), or when there is nothing renderable to point at.
+     * default_content shape: {content_id, filename, mime_type, filepath, remote_url, file_size, content_rev}.
+     */
+    private fun buildDefaultItem(): PlaylistItem? {
+        val dc = defaultContent ?: return null
+        val mime = dc.optString("mime_type", "")
+        if (!mime.startsWith("image/")) return null   // only images are shown as standby
+        val remoteUrl = if (dc.isNull("remote_url")) null else dc.optString("remote_url", "").ifEmpty { null }
+        val contentId = if (dc.isNull("content_id")) "" else dc.optString("content_id", "")
+        // Needs something to render: a stream URL, or a content id whose bytes we can look up on disk.
+        if (remoteUrl.isNullOrEmpty() && contentId.isEmpty()) return null
+        return PlaylistItem(
+            assignmentId = -1,      // synthetic: never a real assignment id
+            contentId = contentId,
+            filename = dc.optString("filename", "default"),
+            mimeType = mime,
+            filepath = if (dc.isNull("filepath")) "" else dc.optString("filepath", ""),
+            durationSec = 0,
+            fileSize = dc.optLong("file_size", 0),
+            sortOrder = -1,
+            remoteUrl = remoteUrl,
+            contentRev = dc.optLong("content_rev", 0L)
+        )
+    }
+
+    /**
+     * Render the standby image for a DEFINED idle state. Returns true when it was shown (so the caller
+     * suppresses the idle text), false to fall back to the idle text. A LOCAL default only renders
+     * when its bytes are actually on disk (offline off-hours is the whole point) — otherwise playItem
+     * would bounce into next() and loop; a REMOTE default streams and can't be cached.
+     */
+    private fun renderDefaultContent(): Boolean {
+        val item = buildDefaultItem() ?: return false
+        if (!item.isRemote && !contentReady(item) && !contentUsable(item)) return false
+        if (defaultShowing) return true   // already up — don't re-mount on every idle re-check
+        Log.i("PlaylistController", "Rendering default/standby content: ${item.filename}")
+        onItemChanged(item)
+        defaultShowing = true
+        return true
+    }
+
+    /** Empty/no-playlist idle state (a): standby image if present, else the idle text. */
+    private fun emitPlaylistEmpty() {
+        if (!renderDefaultContent()) onPlaylistEmpty()
+    }
+
     // Video wall: followers don't self-advance — the leader's wall:sync drives the index.
     private var wallFollower = false
     // Wall-clock at which the current item started playing, for non-video sync position.
@@ -357,7 +426,7 @@ class PlaylistController(
         if (items.isEmpty()) {
             currentIndex = -1
             cancelAdvance()
-            onPlaylistEmpty()
+            emitPlaylistEmpty()
         } else if (isRunning) {
             // Try to keep playing the current item if it's still in the list
             if (currentlyPlayingId != null) {
@@ -412,7 +481,7 @@ class PlaylistController(
         if (items.isEmpty()) {
             currentIndex = -1
             cancelAdvance()
-            onPlaylistEmpty()
+            emitPlaylistEmpty()
         } else if (wasCurrentId == contentId) {
             if (currentIndex >= items.size) currentIndex = 0
             playCurrentItem()
@@ -421,7 +490,7 @@ class PlaylistController(
 
     fun start() {
         isRunning = true
-        if (items.isEmpty()) { onPlaylistEmpty(); return }
+        if (items.isEmpty()) { emitPlaylistEmpty(); return }
         // #74/#75: begin on the first schedule-active item; daypart-closed => defined idle.
         if (firstActiveIndex() < 0) { showNothingScheduled(); return }
         // Screen-resilience: only start on an item whose content is downloaded; if the scheduled
@@ -442,7 +511,7 @@ class PlaylistController(
     fun startIfNeeded() {
         if (items.isEmpty()) {
             Log.i("PlaylistController", "No items, nothing to start")
-            onPlaylistEmpty()
+            emitPlaylistEmpty()
             return
         }
         // #162: isRunning + a valid index are NOT proof the player is actually rendering. After a
@@ -483,7 +552,7 @@ class PlaylistController(
             cancelPendingSwapDeadline()
             val succ = pendingSuccessorId; pendingSuccessorId = null
             items.clear(); items.addAll(p)
-            if (items.isEmpty()) { currentIndex = -1; cancelAdvance(); onPlaylistEmpty(); return }
+            if (items.isEmpty()) { currentIndex = -1; cancelAdvance(); emitPlaylistEmpty(); return }
             onRequestRefresh?.invoke()
             if (firstActiveIndex() < 0) { showNothingScheduled(); return }
             var idx = if (succ != null) items.indexOfFirst { it.contentId == succ } else -1
@@ -593,6 +662,7 @@ class PlaylistController(
         }
         onItemChanged(item)
         hasContentOnScreen = true // a valid item is now rendered — protect it from being blanked
+        defaultShowing = false    // real content is on screen; a later idle emit re-mounts the standby
 
         // Proof-of-play (parity with the web player): close the outgoing item and open this one.
         // Wall followers don't log — the leader's single row represents the whole wall.
@@ -793,7 +863,9 @@ class PlaylistController(
     private fun showNothingScheduled() {
         cancelAdvance()
         hasContentOnScreen = false // the daypart genuinely closed — a defined idle, not a blank-bug
-        (onNothingScheduled ?: onPlaylistEmpty)()
+        // Idle state (b): a playlist exists but every item is filtered out by its schedule (off-times).
+        // Show the standby image when one is set, else the nothing-scheduled text.
+        if (!renderDefaultContent()) (onNothingScheduled ?: onPlaylistEmpty)()
         cancelRetry()
         retryRunnable = Runnable {
             if (isRunning && items.isNotEmpty()) {
