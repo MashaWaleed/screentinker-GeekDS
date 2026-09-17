@@ -119,6 +119,12 @@ dependencies {
     // ExoPlayer / Media3
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
+    // HLS live-channel playback (mime_type video/hls, .m3u8 remote_url). DefaultMediaSourceFactory
+    // locates HlsMediaSource.Factory by reflection, so an .m3u8 MediaItem only plays when this
+    // module is on the classpath — without it ExoPlayer rejects the stream. This is what backs the
+    // playback.hls capability.
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.2.1")   // native RTSP camera/stream playback
 
     // Socket.IO client.
     //

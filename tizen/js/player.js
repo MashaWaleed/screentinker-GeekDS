@@ -965,6 +965,10 @@ PlaylistPlayer.prototype.renderVideo = function (item, single) {
   // so the outgoing frame is still on stage to capture. Plain videos fall through to the proven path.
   if (this._videoWillComposite(item)) { return this.renderVideoBuffered(item, single); }
   var self = this;
+  // A live HLS channel (video/hls + remote_url .m3u8) is a plain <video> whose src is the stream URL
+  // — shaped exactly like a remote MP4 — but it NEVER ends, so its duration_sec is DWELL (how long to
+  // hold the channel), not clip length. See the advance block at the end of this function.
+  var isHls = (item.mime_type || '') === 'video/hls';
   // Double buffer: reuse the pre-buffered element for this index if warmed (no black hold); its src
   // is already set + buffering, so playback starts near-instantly.
   var pre = this._takePreload(this.index);
@@ -985,11 +989,20 @@ PlaylistPlayer.prototype.renderVideo = function (item, single) {
   var applyMute = function () { try { v.muted = self.wallFollower ? true : !!item.muted; } catch (e) {} };
   v.addEventListener('playing', applyMute, { once: true });
   if (!v.paused && v.readyState >= 2) applyMute(); // a reused preload may already be playing
-  // Safety net: if 'ended' never fires (rare), advance after the known
-  // content duration (or the assignment duration) + a buffer.
+  // Advance timing splits by whether the clip ENDS:
+  //  - normal uploaded/remote video: 'ended' advances; the timer is only a safety net (duration + buf).
+  //  - live HLS (video/hls): the stream never ends, so 'ended' never fires. duration_sec is DWELL:
+  //      dwell > 0      -> arm the finite advance timer for the dwell (durationMs), like an image.
+  //      dwell 0/absent -> arm NO timer: stay on the channel (never spin). It leaves only when the
+  //                        ~60s schedule re-check (app.js register -> device:playlist-update -> load)
+  //                        finds it ineligible, or the playlist is otherwise advanced.
   if (!single) {
-    var secs = Number(item.content_duration || item.duration_sec) || this.DEFAULT_DURATION; // B3: numeric
-    this.schedule((secs + 5) * 1000);
+    if (isHls) {
+      if (Number(item.duration_sec) > 0) this.schedule(this.durationMs(item));
+    } else {
+      var secs = Number(item.content_duration || item.duration_sec) || this.DEFAULT_DURATION; // B3: numeric
+      this.schedule((secs + 5) * 1000);
+    }
   }
 };
 
@@ -1616,6 +1629,9 @@ GroupSyncController.prototype.slots = function () {
   var p = this.player, items = p.items, acc = 0, s = [];
   for (var i = 0; i < items.length; i++) {
     if (!p.scheduleAllows(items[i])) continue;   // same daypart filter as solo playback
+    // A dwell-0 live HLS channel is INFINITE (no finite slot length), so it would desync a synced
+    // group. Treat it as INELIGIBLE for the clock scheduler; a dwell>0 live item is a finite slot.
+    if (items[i].mime_type === 'video/hls' && !(Number(items[i].duration_sec) > 0)) continue;
     // CANONICAL slot length — MUST match the web + Android engines exactly (max(1,dur||10)*1000).
     // Deliberately NOT durationMs() (its MIN_DURATION=3 clamp would diverge from the other players).
     var d = Math.max(1, Number(items[i].duration_sec) || 10) * 1000;

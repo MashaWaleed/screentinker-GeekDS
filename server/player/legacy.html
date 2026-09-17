@@ -1082,6 +1082,8 @@ function mediaFailureSkip(el, label, src, mayAdvance = true) {
 }
 const UNKNOWN_ITEM_HOLD_MS = 15e3;
 const BUNDLE_MIME = "application/vnd.screentinker.bundle+zip";
+const LIVE_MIME = "video/hls";
+const LIVE_DWELL_RECHECK_MS = 6e4;
 const WIDGET_SWAP_TIMEOUT_MS = 8e3;
 const WIDGET_SOLO_REFRESH_MS = 6e4;
 let pendingWidgetSwap = null;
@@ -3014,6 +3016,9 @@ function declaredCapabilities() {
     "playback.youtube",
     "playback.zones",
     "playback.pip",
+    // IPTV: this player plays a live HLS stream — natively on Safari/BrightSign/webOS/Tizen,
+    // and via the lazily-loaded vendored hls.js on Chrome. See renderLiveStream.
+    "playback.hls",
     /* Mounting a server-flattened bundle needs nothing this player does not already have — it
      * is the widget iframe with a different URL. Claimed unconditionally for that reason, and
      * deliberately NOT taken to mean the bundle is available offline: nothing here unpacks an
@@ -3343,6 +3348,7 @@ function groupScheduleSlots() {
   let acc = 0;
   for (let i = 0; i < playlist.length; i++) {
     if (!scheduleAllows(playlist[i])) continue;
+    if (playlist[i].mime_type === LIVE_MIME && !(Number(playlist[i].duration_sec) > 0)) continue;
     const dur = Math.max(1, Number(playlist[i].duration_sec) || 10) * 1e3;
     slots.push({ index: i, start: acc, dur });
     acc += dur;
@@ -4212,6 +4218,7 @@ function teardownCurrentMedia(keep) {
   if (container) {
     container.querySelectorAll("video").forEach((v) => {
       try {
+        destroyHls(v);
         v.onended = null;
         v.onerror = null;
         v.onloadeddata = null;
@@ -4236,6 +4243,7 @@ function teardownCurrentMedia(keep) {
   }
   if (currentVideoEl) {
     try {
+      destroyHls(currentVideoEl);
       currentVideoEl.onended = null;
       currentVideoEl.onerror = null;
       currentVideoEl.onloadeddata = null;
@@ -4608,6 +4616,140 @@ function wireSoloVideoPlayback(video, item, src, opts) {
     }
   }, 2e3);
 }
+function renderLiveStream(item, src, mount, opts) {
+  const o = opts || {};
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted);
+  if (!o.forceMuted) video.volume = 1;
+  video.playsInline = true;
+  video.loop = false;
+  video.style.cssText = wallConfig ? "width:100%;height:100%;object-fit:fill;background:#000" : "width:100%;height:100%;object-fit:contain;background:transparent";
+  mount.appendChild(video);
+  currentVideoEl = video;
+  const seq = renderSeq;
+  attachHlsTo(video, src, {
+    stale: () => renderSeq !== seq || video !== currentVideoEl,
+    onFatal: () => mediaFailureSkip(video, "hls", src, o.mayAdvance !== false)
+  });
+  if (o.mayAdvance !== false) armLiveDwell(item);
+}
+function attachHlsTo(video, src, opts) {
+  const o = opts || {};
+  const stale = typeof o.stale === "function" ? o.stale : () => false;
+  let settled = false;
+  const fail = () => {
+    if (settled) return;
+    settled = true;
+    if (o.onFatal) o.onFatal();
+  };
+  const play = () => video.play().catch(() => {
+    video.muted = true;
+    video.play().catch(() => {
+    });
+  });
+  const useHlsJs = () => {
+    if (stale()) return;
+    loadHlsLib((Hls) => {
+      if (stale()) return;
+      if (!Hls || !Hls.isSupported()) {
+        fail();
+        return;
+      }
+      try {
+        const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+        video._stHls = hls;
+        hls.on(Hls.Events.ERROR, (evt, data) => {
+          if (data && data.fatal) fail();
+        });
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        play();
+      } catch (e) {
+        fail();
+      }
+    }, fail);
+  };
+  const stall = setTimeout(() => {
+    if (settled || stale() || video._stHls) return;
+    if (video.readyState < 2) {
+      video.onerror = null;
+      useHlsJs();
+    }
+  }, 6e3);
+  video.onerror = () => {
+    if (settled || stale()) return;
+    clearTimeout(stall);
+    const code = video.error && video.error.code;
+    if (!video._stHls && (code === 4 || code === 3 || code === void 0)) {
+      video.onerror = null;
+      useHlsJs();
+    } else fail();
+  };
+  try {
+    video.src = src;
+    play();
+  } catch (e) {
+    clearTimeout(stall);
+    useHlsJs();
+  }
+}
+function destroyHls(video) {
+  if (video && video._stHls) {
+    try {
+      video._stHls.destroy();
+    } catch (e) {
+    }
+    video._stHls = null;
+  }
+}
+function loadHlsLib(onReady, onFail) {
+  if (window.Hls) {
+    onReady(window.Hls);
+    return;
+  }
+  loadHlsLib.waiters = loadHlsLib.waiters || [];
+  if (loadHlsLib.state === "failed") {
+    if (onFail) onFail();
+    return;
+  }
+  loadHlsLib.waiters.push({ onReady, onFail });
+  if (loadHlsLib.state === "loading") return;
+  loadHlsLib.state = "loading";
+  const s = document.createElement("script");
+  s.src = (config.serverUrl || "") + "/player/hls.light.min.js";
+  s.async = true;
+  const flush = () => {
+    const Hls = window.Hls || null;
+    loadHlsLib.state = Hls ? "ready" : "failed";
+    const ws = loadHlsLib.waiters;
+    loadHlsLib.waiters = [];
+    ws.forEach((w) => {
+      if (Hls) w.onReady(Hls);
+      else if (w.onFail) w.onFail();
+    });
+  };
+  s.onload = flush;
+  s.onerror = flush;
+  document.head.appendChild(s);
+}
+function armLiveDwell(item) {
+  const dwell = Number(item && item.duration_sec) || 0;
+  if (dwell > 0) {
+    scheduleAdvance(nextItem, dwell * 1e3);
+    return;
+  }
+  scheduleAdvance(reevaluateLiveDwell, LIVE_DWELL_RECHECK_MS);
+}
+function reevaluateLiveDwell() {
+  if (!isPlaying) return;
+  const item = playlist[currentIndex];
+  if (item && item.mime_type === LIVE_MIME && scheduleAllows(item)) {
+    scheduleAdvance(reevaluateLiveDwell, LIVE_DWELL_RECHECK_MS);
+  } else {
+    nextItem();
+  }
+}
 function attachSubtitleTrack(video, item) {
   if (!item.subtitle_url || item.remote_url) return;
   const track = document.createElement("track");
@@ -4773,7 +4915,7 @@ function renderContent(item) {
     renderImageBuffered(item);
     return;
   }
-  const isVideoBufferable = item && typeof item.mime_type === "string" && item.mime_type.startsWith("video/") && item.mime_type !== "video/youtube" && !item.widget_id && !wallConfig && !isZones && !groupSync;
+  const isVideoBufferable = item && typeof item.mime_type === "string" && item.mime_type.startsWith("video/") && item.mime_type !== "video/youtube" && item.mime_type !== "video/hls" && !item.widget_id && !wallConfig && !isZones && !groupSync;
   if (isVideoBufferable) {
     renderVideoBuffered(item);
     return;
@@ -4812,7 +4954,8 @@ function renderContent(item) {
   const forceMuted = isWallFollower_;
   const isFollower = scheduleDriven;
   const isYoutube = item.mime_type === "video/youtube";
-  const isVideo = !isYoutube && ((_a = item.mime_type) == null ? void 0 : _a.startsWith("video/"));
+  const isHls = item.mime_type === LIVE_MIME;
+  const isVideo = !isYoutube && !isHls && ((_a = item.mime_type) == null ? void 0 : _a.startsWith("video/"));
   const isImage = (_b = item.mime_type) == null ? void 0 : _b.startsWith("image/");
   const remoteUrl = item.remote_url;
   const serverUrl = config.serverUrl;
@@ -4822,6 +4965,8 @@ function renderContent(item) {
   } else {
     if (isYoutube) {
       createYoutubeEmbed(src, item, mount);
+    } else if (isHls) {
+      renderLiveStream(item, src, mount, { forceMuted, mayAdvance: !isFollower, scheduleDriven });
     } else if (isVideo) {
       const preloaded = scheduleDriven ? takeGroupPreload(currentIndex) : null;
       const video = preloaded || document.createElement("video");
@@ -4940,6 +5085,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   const advance = () => showZoneItem(zone, div, items, index + 1, timers);
   div.querySelectorAll("video").forEach((v) => {
     try {
+      destroyHls(v);
       v.onended = null;
       v.pause();
       v.removeAttribute("src");
@@ -4949,7 +5095,8 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   });
   div.innerHTML = "";
   const isYoutube = a.mime_type === "video/youtube";
-  const isVideo = !isYoutube && ((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/"));
+  const isHls = a.mime_type === "video/hls";
+  const isVideo = !isYoutube && !isHls && ((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/"));
   const src = mediaUrl(a);
   const dur = (a.duration_sec || 10) * 1e3;
   if (a.widget_id) {
@@ -4962,6 +5109,34 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   } else if (isYoutube) {
     createYoutubeEmbed(src, a, div);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
+  } else if (isHls) {
+    const video = document.createElement("video");
+    video.autoplay = true;
+    video.__stOverlay = !!div.__stOverlay;
+    video.muted = div.__stOverlay ? false : zone.sort_order > 0;
+    video.playsInline = true;
+    video.loop = false;
+    video.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));
+    div.appendChild(video);
+    attachHlsTo(video, src, { onFatal: () => {
+      if (multi) {
+        if (timers[zone.id]) clearTimeout(timers[zone.id]);
+        timers[zone.id] = setTimeout(advance, 3e3);
+      }
+    } });
+    if (multi) {
+      const dwell = Number(a.duration_sec) || 0;
+      if (dwell > 0) {
+        timers[zone.id] = setTimeout(advance, dwell * 1e3);
+      } else {
+        const recheckMs = 6e4;
+        const recheck = () => {
+          if (zoneNextActive(items, index, zone.id) === index) timers[zone.id] = setTimeout(recheck, recheckMs);
+          else advance();
+        };
+        timers[zone.id] = setTimeout(recheck, recheckMs);
+      }
+    }
   } else if (isVideo) {
     const video = document.createElement("video");
     video.src = src;

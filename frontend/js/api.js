@@ -512,6 +512,12 @@ export const api = {
     body: JSON.stringify({ url, name })
   }),
 
+  // IPTV: add a live HLS stream (the player opens the .m3u8 on its LAN; the server never fetches it).
+  addHlsContent: (url, name) => request('/content/hls', {
+    method: 'POST',
+    body: JSON.stringify({ url, name })
+  }),
+
   // Assignments
   getAssignments: (deviceId) => request(`/assignments/device/${deviceId}`),
   addAssignment: (deviceId, data) => request(`/assignments/device/${deviceId}`, {

@@ -1163,6 +1163,11 @@
     /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Deliberately matches no
      * image/ or video/ prefix, so nothing routes it as media by accident. */
     const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+    const LIVE_MIME = 'video/hls';   // IPTV: a live stream item's mime (see renderLiveStream)
+    // A dwell-0 live channel never advances on its own; on this slow cadence we only re-check
+    // whether it is STILL eligible (window/enabled/play_when), and move on if not. Same interval
+    // as the widget solo re-check — a minute, never a busy-loop.
+    const LIVE_DWELL_RECHECK_MS = 60000;
     const WIDGET_SWAP_TIMEOUT_MS = 8000;
     const WIDGET_SOLO_REFRESH_MS = 60000;
     let pendingWidgetSwap = null;   // { iframe, timer } while a new widget iframe loads
@@ -1232,6 +1237,9 @@
     }
     let lastWallSync = null;
     let currentVideoEl = null;
+    // IPTV/HLS note: the hls.js instance for a live <video> is stored ON the element (video._stHls),
+    // not a module global, so fullscreen teardown and each zone destroy exactly their own and several
+    // zone streams can run at once. See attachHlsTo / destroyHls.
     let currentItemStartedAt = 0;
     // Bumped on every renderContent dispatch; a buffered (async warm-play) render captures it at start
     // and bails if it changes. MUST be declared here with the other top-level state — the cold-start
@@ -3785,6 +3793,9 @@
         // Render paths that exist in this file unconditionally.
         'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
         'playback.zones', 'playback.pip',
+        // IPTV: this player plays a live HLS stream — natively on Safari/BrightSign/webOS/Tizen,
+        // and via the lazily-loaded vendored hls.js on Chrome. See renderLiveStream.
+        'playback.hls',
         /* Mounting a server-flattened bundle needs nothing this player does not already have — it
          * is the widget iframe with a different URL. Claimed unconditionally for that reason, and
          * deliberately NOT taken to mean the bundle is available offline: nothing here unpacks an
@@ -4257,6 +4268,11 @@
       const slots = []; let acc = 0;
       for (let i = 0; i < playlist.length; i++) {
         if (!scheduleAllows(playlist[i])) continue;                       // same daypart filter as solo playback
+        // P6: a dwell-0 live channel has an INFINITE slot, which the clock scheduler cannot lay on a
+        // period. Skip it here (fail closed for sync) so a synced group never desyncs on it — the
+        // whole group agrees to leave it out rather than one screen guessing a length. A live channel
+        // with a real dwell (>0) is a finite slot and schedules normally.
+        if (playlist[i].mime_type === LIVE_MIME && !(Number(playlist[i].duration_sec) > 0)) continue;
         const dur = Math.max(1, Number(playlist[i].duration_sec) || 10) * 1000;
         slots.push({ index: i, start: acc, dur }); acc += dur;
       }
@@ -5340,6 +5356,10 @@
       if (container) {
         container.querySelectorAll('video').forEach(v => {
           try {
+            // IPTV: destroy the element's hls.js FIRST so it detaches before we strip the src —
+            // otherwise the loader keeps fetching segments off a detached element (a leak that also
+            // keeps pulling the stream over the LAN). Element-scoped, so a zone stream is covered too.
+            destroyHls(v);
             v.onended = null; v.onerror = null; v.onloadeddata = null;
             v.pause();
             v.removeAttribute('src');
@@ -5359,6 +5379,7 @@
       // (scoped to the container) can't find it. This is what kills the "ghost audio".
       if (currentVideoEl) {
         try {
+          destroyHls(currentVideoEl);   // a detached live element's hls.js would keep pulling the stream
           currentVideoEl.onended = null; currentVideoEl.onerror = null; currentVideoEl.onloadeddata = null;
           currentVideoEl.pause();
           currentVideoEl.removeAttribute('src');
@@ -5832,6 +5853,131 @@
       setTimeout(() => { if (video.paused) { video.muted = true; video.play().catch(() => {}); } }, 2000);
     }
 
+    // ==================== IPTV / live HLS ====================
+    // A live channel is a <video> whose src is an m3u8 the PLAYER opens on the LAN (the server never
+    // fetches it). NATIVE FIRST: Safari / BrightSign / webOS / Tizen decode HLS on the element, so
+    // hls.js never loads on those boxes (keeping it off the BrightSign stick). Chrome/Firefox cannot,
+    // so the element errors SRC_NOT_SUPPORTED (or stalls) and we lazily load the VENDORED hls.js
+    // (server/player/hls.light.min.js — no CDN, works on an air-gapped LAN) and attach it. Every
+    // failure path skips the item (P4), never a stuck decoder.
+    function renderLiveStream(item, src, mount, opts) {
+      const o = opts || {};
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted);
+      if (!o.forceMuted) video.volume = 1.0;
+      video.playsInline = true;
+      video.loop = false;   // a live stream has no end — looping is meaningless
+      video.style.cssText = wallConfig
+        ? 'width:100%;height:100%;object-fit:fill;background:#000'
+        : 'width:100%;height:100%;object-fit:contain;background:transparent';   // #336: letterbox shows the device colour
+      mount.appendChild(video);
+      currentVideoEl = video;
+      const seq = renderSeq;
+      attachHlsTo(video, src, {
+        stale: () => renderSeq !== seq || video !== currentVideoEl,
+        onFatal: () => mediaFailureSkip(video, 'hls', src, o.mayAdvance !== false),
+      });
+      // DWELL, not clip length. A solo/leader arms it; a follower/group member is schedule-driven
+      // (its tick/leader drives the index) and arms nothing.
+      if (o.mayAdvance !== false) armLiveDwell(item);
+    }
+
+    // Attach an HLS source to a <video>: native FIRST (Safari / BrightSign / webOS / Tizen decode an
+    // m3u8 on the element), then the vendored hls.js on an engine that cannot (Chrome). ELEMENT-SCOPED
+    // on purpose — the hls.js instance is stored on `video._stHls` so both the fullscreen teardown and
+    // each zone can destroy exactly their own, and multiple zone streams can run at once with no shared
+    // global. opts.stale() bails a superseded attach; opts.onFatal() handles an unrecoverable error.
+    function attachHlsTo(video, src, opts) {
+      const o = opts || {};
+      const stale = typeof o.stale === 'function' ? o.stale : () => false;
+      let settled = false;
+      const fail = () => { if (settled) return; settled = true; if (o.onFatal) o.onFatal(); };
+      const play = () => video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+
+      const useHlsJs = () => {
+        if (stale()) return;
+        loadHlsLib((Hls) => {
+          if (stale()) return;
+          if (!Hls || !Hls.isSupported()) { fail(); return; }
+          try {
+            const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+            video._stHls = hls;
+            hls.on(Hls.Events.ERROR, (evt, data) => { if (data && data.fatal) fail(); });
+            hls.loadSource(src);
+            hls.attachMedia(video);
+            play();
+          } catch (e) { fail(); }
+        }, fail);
+      };
+
+      // Watchdog: some engines neither error nor start on an m3u8 they cannot handle. If nothing has
+      // buffered in a few seconds and we have not gone to hls.js yet, do so.
+      const stall = setTimeout(() => {
+        if (settled || stale() || video._stHls) return;
+        if (video.readyState < 2 /* HAVE_CURRENT_DATA */) { video.onerror = null; useHlsJs(); }
+      }, 6000);
+
+      video.onerror = () => {
+        if (settled || stale()) return;
+        clearTimeout(stall);
+        const code = video.error && video.error.code;
+        // SRC_NOT_SUPPORTED (4) or a decode failure (3) on the NATIVE attempt -> try hls.js once.
+        if (!video._stHls && (code === 4 || code === 3 || code === undefined)) { video.onerror = null; useHlsJs(); }
+        else fail();
+      };
+
+      // Try native. On a box that decodes HLS this just works and hls.js is never fetched.
+      try { video.src = src; play(); } catch (e) { clearTimeout(stall); useHlsJs(); }
+    }
+
+    // Destroy any hls.js instance attached to a <video> (element-scoped; safe on any video element).
+    function destroyHls(video) {
+      if (video && video._stHls) { try { video._stHls.destroy(); } catch (e) { /* already gone */ } video._stHls = null; }
+    }
+
+    // Lazily fetch the vendored hls.js exactly once, shared across items. State lives on the function
+    // object (not a module `let`) so a cold-start cached live item cannot read it in a temporal dead
+    // zone — see player-boot-tdz.test.js.
+    function loadHlsLib(onReady, onFail) {
+      if (window.Hls) { onReady(window.Hls); return; }
+      loadHlsLib.waiters = loadHlsLib.waiters || [];
+      if (loadHlsLib.state === 'failed') { if (onFail) onFail(); return; }
+      loadHlsLib.waiters.push({ onReady: onReady, onFail: onFail });
+      if (loadHlsLib.state === 'loading') return;
+      loadHlsLib.state = 'loading';
+      const s = document.createElement('script');
+      s.src = (config.serverUrl || '') + '/player/hls.light.min.js';
+      s.async = true;
+      const flush = () => {
+        const Hls = window.Hls || null;
+        loadHlsLib.state = Hls ? 'ready' : 'failed';
+        const ws = loadHlsLib.waiters; loadHlsLib.waiters = [];
+        ws.forEach((w) => { if (Hls) w.onReady(Hls); else if (w.onFail) w.onFail(); });
+      };
+      s.onload = flush;
+      s.onerror = flush;   // no window.Hls after load -> treated as failed -> item skips
+      document.head.appendChild(s);
+    }
+
+    // DWELL timer for a live channel. duration_sec > 0 = advance after that many seconds. 0/absent =
+    // stay on the channel; only leave when the schedule makes it ineligible (checked on a slow cadence).
+    function armLiveDwell(item) {
+      const dwell = Number(item && item.duration_sec) || 0;
+      if (dwell > 0) { scheduleAdvance(nextItem, dwell * 1000); return; }
+      scheduleAdvance(reevaluateLiveDwell, LIVE_DWELL_RECHECK_MS);
+    }
+
+    function reevaluateLiveDwell() {
+      if (!isPlaying) return;
+      const item = playlist[currentIndex];
+      if (item && item.mime_type === LIVE_MIME && scheduleAllows(item)) {
+        scheduleAdvance(reevaluateLiveDwell, LIVE_DWELL_RECHECK_MS);   // still eligible -> stay on air
+      } else {
+        nextItem();   // window/enabled/play_when closed (or the list changed) -> move on / idle
+      }
+    }
+
     // #216: a WebVTT subtitle track when the content carries one (uploaded videos only;
     // remote/proxied clips are skipped). Served same-origin, so CORS-clean like the video.
     // Shared: the buffered copy had it, the legacy branch did not. Called at element creation
@@ -6011,8 +6157,11 @@
       // holding a freeze-frame until onRenderedFirstFrame; the old DOM here is that freeze-frame.
       // Wall/zone/group/widget are excluded (they carry their own sync); YouTube (video/youtube)
       // too.
+      // NOTE: video/hls (a live stream) is EXCLUDED — the buffered warm-up waits for a first
+      // presented frame and treats the clip as finite. A live stream has no end and, on Chrome,
+      // native <video> cannot even open the m3u8; renderLiveStream owns that path instead.
       const isVideoBufferable = item && typeof item.mime_type === 'string'
-        && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube'
+        && item.mime_type.startsWith('video/') && item.mime_type !== 'video/youtube' && item.mime_type !== 'video/hls'
         && !item.widget_id && !wallConfig && !isZones && !groupSync;
       // NOTE: no hardware-plane probe here on purpose. The probe protects only the wipe's
       // `to` texture (a transparent snapshot would fade in from nothing), so it lives in
@@ -6101,7 +6250,8 @@
       const isFollower      = scheduleDriven;   // keep the old name for the branches below (advance gating)
 
       const isYoutube = item.mime_type === 'video/youtube';
-      const isVideo = !isYoutube && item.mime_type?.startsWith('video/');
+      const isHls = item.mime_type === LIVE_MIME;
+      const isVideo = !isYoutube && !isHls && item.mime_type?.startsWith('video/');
       const isImage = item.mime_type?.startsWith('image/');
       const remoteUrl = item.remote_url;
       const serverUrl = config.serverUrl;
@@ -6113,6 +6263,8 @@
         // Fullscreen / wall-tile
         if (isYoutube) {
           createYoutubeEmbed(src, item, mount);
+        } else if (isHls) {
+          renderLiveStream(item, src, mount, { forceMuted: forceMuted, mayAdvance: !isFollower, scheduleDriven: scheduleDriven });
         } else if (isVideo) {
           // Double buffer: reuse the pre-buffered element for this index if we warmed it (no black
           // hold). Its src is already set + buffered; a fresh element otherwise.
@@ -6272,11 +6424,12 @@
       const multi = items.length > 1 || items.some(it => (it.schedules && it.schedules.length) || it.play_from || it.play_until || it.play_when);
       const advance = () => showZoneItem(zone, div, items, index + 1, timers);
       // Tear down any prior media in this zone before swapping.
-      div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+      div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
       div.innerHTML = '';
 
       const isYoutube = a.mime_type === 'video/youtube';
-      const isVideo = !isYoutube && a.mime_type?.startsWith('video/');
+      const isHls = a.mime_type === 'video/hls';   // literal: showZoneItem is extracted + eval'd in isolation by a test
+      const isVideo = !isYoutube && !isHls && a.mime_type?.startsWith('video/');
       const src = mediaUrl(a);
       const dur = (a.duration_sec || 10) * 1000;
 
@@ -6296,6 +6449,35 @@
       } else if (isYoutube) {
         createYoutubeEmbed(src, a, div);
         if (multi) timers[zone.id] = setTimeout(advance, dur);
+      } else if (isHls) {
+        // IPTV in a zone: a live stream, native-HLS first with the vendored hls.js fallback (same as
+        // the fullscreen path), per-zone so several zones can each run one. Duration is DWELL: a
+        // rotating zone advances after duration_sec (>0); a dwell-0 (or sole-item) zone stays, and on
+        // the slow re-check cadence only advances if this stops being the active pick (windows still
+        // re-evaluate, without remounting the stream every minute).
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.__stOverlay = !!div.__stOverlay;
+        video.muted = div.__stOverlay ? false : (zone.sort_order > 0);
+        video.playsInline = true;
+        video.loop = false;   // a live stream has no end
+        video.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
+        div.appendChild(video);
+        attachHlsTo(video, src, { onFatal: () => { if (multi) { if (timers[zone.id]) clearTimeout(timers[zone.id]); timers[zone.id] = setTimeout(advance, 3000); } } });
+        if (multi) {
+          const dwell = Number(a.duration_sec) || 0;
+          if (dwell > 0) {
+            timers[zone.id] = setTimeout(advance, dwell * 1000);
+          } else {
+            const recheckMs = 60000;   // literal: showZoneItem is extracted + eval'd in isolation by a test
+            const recheck = () => {
+              // Still the active pick for this zone? stay (no remount); otherwise rotate on.
+              if (zoneNextActive(items, index, zone.id) === index) timers[zone.id] = setTimeout(recheck, recheckMs);
+              else advance();
+            };
+            timers[zone.id] = setTimeout(recheck, recheckMs);
+          }
+        }
       } else if (isVideo) {
         const video = document.createElement('video');
         video.src = src;
