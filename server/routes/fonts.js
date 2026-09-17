@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { db } = require('../db/database');
 const config = require('../config');
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 const { validateFont, UnsupportedFontError, MAX_FONT_BYTES, FORMATS } = require('../lib/font-sniff');
 
 /*
@@ -69,6 +69,7 @@ router.post('/', upload.single('font'), (req, res) => {
   if (!req.workspaceId) {
     return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading a font.' });
   }
+  if (denyReadOnly(req, res)) return;   // a read-only member cannot upload a font
   if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No file received.' });
 
   let info;
