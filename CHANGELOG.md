@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+**Operator "force update" now overrides the phantom/backoff OTA holds.** A display on a genuine
+prerelease core (for example a one-off `-diag` build) could not self-recover to stable: the #144
+phantom guard deliberately refuses to chase an older-core prerelease, and the dashboard "force
+update" hit the same hold and silently reported "already on the latest version". `ota-breaker.decide()`
+now takes a `forced` flag; a forced check on a client strictly BEHIND latest returns `forced-override`
+ahead of the `superseded-prerelease` and `rate-backoff` holds, while an unforced check is held
+exactly as before. It never forces a downgrade or a same-version reinstall, and the server-side OTA
+kill switch still wins. The Android player sends `forced=1` only on an operator-forced check, never
+the 30-minute timer. (#369)
+
 ## 2.1.2 (2026-09-17)
 
 ### Added
