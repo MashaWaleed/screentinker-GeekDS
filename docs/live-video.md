@@ -26,6 +26,8 @@ Devices page works exactly as before.
 > For many screens off one camera, or for non-Android players, run an on-site **RTSP-to-HLS bridge**
 > (for example a go2rtc instance of your own) and point a `video/hls` item at its HLS output.
 > ScreenTinker does not run that sidecar for you and never fetches the stream.
+>
+> Full setup and the transport comparison: [`live-playback.md`](live-playback.md).
 
 ## The shape of it
 
