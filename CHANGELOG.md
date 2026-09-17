@@ -55,6 +55,8 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: read-only members could create content in their workspace.** The read-only-viewer gate was enforced on edit and delete but missing on the CREATE routes, so a `workspace_viewer` could still upload content, add remote/YouTube/live-stream content, create widgets, upload fonts, add custom shader transitions, create kiosk pages, and create or duplicate layouts. Added a shared `denyReadOnly` gate to those routes (and to the custom-shader delete, which scoped by workspace but not role). This is the same read-only escalation class as the slide-deck and token fixes; none of it is cross-tenant.
+
 **Data-source `play_when` gating and custom shader transitions work on live devices again.** The
 device payload query left `workspace_id` out of its column list, so the value passed on to the
 payload builder was always null and the two features that key off it (an item that plays only when a
