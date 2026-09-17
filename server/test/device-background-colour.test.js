@@ -107,7 +107,7 @@ test('#336: the device query that feeds the payload actually selects background_
       id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
-      trigger_multicast_group TEXT, trigger_clear_all_token TEXT, default_content_id TEXT,
+      trigger_multicast_group TEXT, trigger_clear_all_token TEXT, default_content_id TEXT, workspace_id TEXT,
       capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT,
       playlist_id TEXT, layout_id TEXT
     );
@@ -121,6 +121,34 @@ test('#336: the device query that feeds the payload actually selects background_
   mem.close();
   assert.equal(red.background_color, '#ff0000', 'a saved colour must come out of the query the payload is built from');
   assert.equal(unset.background_color, null, 'and an unset one stays null, which the player treats as its default');
+});
+
+/*
+ * Same #336 class: the payload passes `workspace_id: device?.workspace_id` into assemblePayload, but
+ * the device SELECT omitted d.workspace_id, so it was always undefined -> null. That made
+ * attachDataSourceBag(null) / customShaderRegistry(null) no-op, so data-source play_when gating and
+ * custom shader transitions were silently dead on every live device. Run the real query and prove
+ * workspace_id comes out of it.
+ */
+test('the device query selects workspace_id (data-source play_when + custom shaders depend on it)', () => {
+  const ds = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
+  const m = ds.match(/const device = db\.prepare\(`(SELECT r\.playlist_id AS playlist_id[\s\S]*?WHERE d\.id = \?)`\)\.get\(deviceId\);/);
+  assert.ok(m, 'device SELECT not found');
+  const mem = new Database(':memory:');
+  mem.exec(`
+    CREATE TABLE devices (
+      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
+      reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
+      trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
+      trigger_multicast_group TEXT, trigger_clear_all_token TEXT, default_content_id TEXT, workspace_id TEXT,
+      capabilities TEXT, platform TEXT, android_version TEXT, client_type TEXT, playlist_id TEXT, layout_id TEXT
+    );
+    CREATE VIEW device_resolved_playlist AS SELECT id AS device_id, playlist_id, 'device' AS source, layout_id FROM devices;
+    INSERT INTO devices (id, orientation, workspace_id) VALUES ('d1', 'landscape', 'ws-42');
+  `);
+  const got = mem.prepare(m[1]).get('d1');
+  mem.close();
+  assert.equal(got.workspace_id, 'ws-42', 'workspace_id must come out of the query the payload is built from');
 });
 
 test('#336: the fullscreen video and widget surfaces no longer paint their own black over it', () => {

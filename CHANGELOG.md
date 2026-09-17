@@ -55,6 +55,20 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Data-source `play_when` gating and custom shader transitions work on live devices again.** The
+device payload query left `workspace_id` out of its column list, so the value passed on to the
+payload builder was always null and the two features that key off it (an item that plays only when a
+data-source field matches, and a workspace's uploaded shader transitions) silently no-opped on every
+real screen while passing in tests that supplied a workspace id. Added the column to the query, and
+to the dashboard preview payload, which had the same gap.
+
+**A cyclic or over-deep playlist nest can no longer crash publish.** Playlists nest one level deep,
+enforced when a child is added. But the snapshot builder's depth guard was dead code (it reset the
+depth to zero on every recursion), and the bulk `paste` action skipped the one-level checks the
+single-item add path runs. A row written by some other path (an import, a migration) that formed a
+cycle, or a paste that built a second level, would recurse until the stack overflowed and publish or
+preview returned a 500. The builder now tracks the nesting depth and the ancestor chain and refuses a
+cycle or an over-deep reference, and paste enforces the same one-level guard as add.
 **Security: the e-ink/embedded renderer no longer makes unguarded server-side fetches (SSRF).** When
 a device's content is a remote URL, the embedded snapshot renderer fetches it on the server. Three of
 those paths bypassed the SSRF guard the media proxy and data-source fetcher already use: the native
