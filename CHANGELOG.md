@@ -55,6 +55,17 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: the e-ink/embedded renderer no longer makes unguarded server-side fetches (SSRF).** When
+a device's content is a remote URL, the embedded snapshot renderer fetches it on the server. Three of
+those paths bypassed the SSRF guard the media proxy and data-source fetcher already use: the native
+layout renderer fetched a zone's URL with no vetting at all, and the remote-image and remote-page
+paths vetted once then fetched with an unpinned client, so a hostname that resolves to a private
+address at connect time, or a public URL that redirects to one, reached them. Any workspace editor
+could point content at `169.254.169.254`, `127.0.0.1`, or a LAN service and have it rendered into a
+snapshot every device pulls. The two image fetches now go through `guardedRequest` (vet + socket-pin +
+redirect re-vet), the Chromium page render vets every request it makes and aborts any to a
+private/reserved address, and a known non-image URL skips the image probe entirely.
+
 **Schedule and play-window edits now tell you they need a Publish.** Setting a play window on an item
 (`play_from` / `play_until`) saved silently, so it was easy to set a time frame, see nothing change on
 the screen, and conclude the timetable was broken when the edit was only a draft. It now shows the

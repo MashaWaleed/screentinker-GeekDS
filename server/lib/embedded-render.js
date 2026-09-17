@@ -17,7 +17,13 @@ const fs = require('fs');
 const path = require('path');
 const { Jimp, cssColorToHex } = require('jimp');
 const config = require('../config');
-const { assertSafeUrl, SsrfError } = require('./ssrf-guard');
+const { assertSafeUrl, guardedRequest, SsrfError } = require('./ssrf-guard');
+
+// Server-side fetches of an operator-supplied remote_url must go through guardedRequest, which vets
+// the URL, PINS the socket to the vetted IP (defeating DNS-rebinding) and re-vets every redirect hop.
+// A plain fetch() only knows the URL, so a hostname that resolves to an internal address at connect
+// time, or a public URL that 302s to one, would reach it. 20 MB is ample for a still image.
+const REMOTE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 
 const VALID_FIT_MODES = new Set(['cover', 'contain', 'fill']);
 function safeFitMode(m) {
@@ -250,43 +256,30 @@ async function renderRemoteImage(content, profile) {
   const url = content.remote_url;
   if (!url) return null;
 
-  // Same vetting as the page path below: this fetch runs on the server, against a URL a
-  // workspace editor typed. Private ranges and the metadata endpoint are not content.
+  // This fetch runs on the server against a URL a workspace editor typed, so it must go through
+  // guardedRequest: it vets the URL, pins the socket to the vetted IP (no DNS-rebinding) and re-vets
+  // every redirect hop. A plain fetch(), even after a one-shot assertSafeUrl, is bypassable by both.
+  let response;
   try {
-    await assertSafeUrl(url);
+    response = await guardedRequest(url, {
+      responseType: 'buffer',
+      maxBytes: REMOTE_IMAGE_MAX_BYTES,
+      timeoutMs: 15000,
+      headers: { 'user-agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
+    });
   } catch (e) {
     if (e instanceof SsrfError) {
       throw Object.assign(new Error(`Remote content refused: ${e.message}`), { code: 'BLOCKED_URL' });
     }
-    throw Object.assign(new Error(`Invalid remote URL: ${e.message}`), { code: 'FETCH_ERROR' });
+    throw Object.assign(new Error(`Failed to fetch remote content: ${e.message}`), { code: 'FETCH_ERROR' });
   }
 
-  let response;
-  try {
-    response = await fetch(url, {
-      signal: AbortSignal.timeout(15000),
-      headers: { 'User-Agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
-    });
-  } catch (e) {
-    throw Object.assign(
-      new Error(`Failed to fetch remote content: ${e.message}`),
-      { code: 'FETCH_ERROR' }
-    );
-  }
-
-  if (!response.ok) {
-    throw Object.assign(
-      new Error(`Remote content returned HTTP ${response.status}`),
-      { code: 'FETCH_ERROR' }
-    );
-  }
-
-  const contentType = response.headers.get('content-type') || '';
+  const contentType = (response.headers && response.headers['content-type']) || '';
   if (!looksLikeImage(url, contentType)) {
     return null;
   }
 
-  const buf = Buffer.from(await response.arrayBuffer());
+  const buf = response.buffer;
   const img = await Jimp.fromBuffer(buf);
   img.cover({ w: profile.width, h: profile.height });
   return img.getBuffer('image/png');
@@ -455,6 +448,24 @@ async function renderRemotePage(url, profile, options = {}) {
 
       browser = await getBrowser();
       page = await browser.newPage();
+      // Chromium is a full network client: page.goto follows redirects and resolves DNS itself, so
+      // the one-shot assertSafeUrl above does not bind it. Vet EVERY request the page makes (the
+      // navigation, each redirect hop, and every subresource) and abort any that resolves to a
+      // private/reserved address. This closes the reliable variants (a public URL that 302s to an
+      // internal host, and a page that pulls a LAN/loopback image or iframe). A residual DNS-rebinding
+      // TOCTOU between our resolve and Chromium's remains; fully closing it needs host-resolver-rules
+      // pinning at browser launch. Non-http(s) requests (data:/blob:/about:) are not network fetches
+      // to an IP and pass through.
+      await page.setRequestInterception(true);
+      page.on('request', async (r) => {
+        try {
+          const proto = new URL(r.url()).protocol;
+          if (proto === 'http:' || proto === 'https:') await assertSafeUrl(r.url());
+          await r.continue();
+        } catch (_) {
+          try { await r.abort('addressunreachable'); } catch (_2) {}
+        }
+      });
       await page.setViewport({ width: profile.width, height: profile.height });
       await page.goto(url, { waitUntil: 'load', timeout: Math.min(10000, remainingMs()) });
       // Dashboards and boards usually paint from a fetch after load; give that a bounded chance.
@@ -532,7 +543,11 @@ async function render(item, content, screenProfile, options = {}) {
 
   // ── Remote Web Page or Remote Image ──────────────────────────────────────
   if (content && content.remote_url) {
-    const png = await renderRemoteImage(content, profile);
+    // Only probe as an image when the stored type is an image or unknown. A known non-image type
+    // (a dashboard/web page) skips the guarded image GET and goes straight to the browser render —
+    // both cheaper and cleaner than fetching an HTML page just to discover it is not an image.
+    const maybeImage = !content.mime_type || looksLikeImage(content.remote_url, content.mime_type);
+    const png = maybeImage ? await renderRemoteImage(content, profile) : null;
     if (png) return { png };
 
     try {
@@ -650,14 +665,16 @@ async function renderLayoutNative(layout, zoneEntries, screenProfile, options = 
     if (content.remote_url) {
       let res;
       try {
-        res = await fetch(content.remote_url, {
-          signal: AbortSignal.timeout(10000),
-          headers: { 'User-Agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
+        // guardedRequest (not a bare fetch): vet + socket-pin + redirect re-vet, so a zone's
+        // remote_url cannot make the server fetch an internal/metadata address. This path had no
+        // SSRF vetting at all before.
+        res = await guardedRequest(content.remote_url, {
+          responseType: 'buffer',
+          maxBytes: REMOTE_IMAGE_MAX_BYTES,
+          timeoutMs: 10000,
+          headers: { 'user-agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
         });
-        if (!res.ok) {
-          throw Object.assign(new Error(`Remote content returned HTTP ${res.status}`), { code: 'FETCH_ERROR' });
-        }
-        const contentType = res.headers.get('content-type') || '';
+        const contentType = (res.headers && res.headers['content-type']) || '';
         if (!looksLikeImage(content.remote_url, contentType)) {
           throw Object.assign(new Error('Remote content is not an image'), { code: 'FETCH_ERROR' });
         }
@@ -665,7 +682,7 @@ async function renderLayoutNative(layout, zoneEntries, screenProfile, options = 
         console.warn(`[embedded] native layout remote fetch error for zone ${zone.id || 'unknown'}: ${fetchErr.message}`);
         continue;
       }
-      const buf = Buffer.from(await res.arrayBuffer());
+      const buf = res.buffer;
       img = await Jimp.fromBuffer(buf);
     } else {
       const fileToLoad = (content.filepath && looksLikeImage(content.filepath, content.mime_type))
