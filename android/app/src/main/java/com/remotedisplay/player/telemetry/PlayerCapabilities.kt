@@ -45,6 +45,10 @@ object PlayerCapabilities {
             // Every content type the playlist engine renders, plus the layout features built on it.
             caps += listOf(
                 "playback.video", "playback.image", "playback.widget", "playback.youtube",
+                // Live HLS channels (mime_type video/hls, an .m3u8 remote_url). ExoPlayer plays these
+                // natively once media3-exoplayer-hls is on the classpath — this build bundles it — so
+                // the claim is unconditional, exactly like playback.video/playback.youtube beside it.
+                "playback.hls",
                 "playback.zones", "playback.transitions", "playback.pip",
                 // Mounting a server-flattened HTML bundle is the widget WebView with a different
                 // URL, so this build can always do it. It says nothing about offline: nothing here

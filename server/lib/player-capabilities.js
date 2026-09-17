@@ -28,6 +28,13 @@ const CAPABILITIES = [
   // playback surface
   'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
   'playback.zones', 'playback.transitions', 'playback.pip',
+  /* A live HLS stream (mime video/hls) opened by the player on its own LAN. Brand new, so
+   * deliberately in NO baseline: a v1.9.28 player never heard of it and would sit on a black
+   * <video src=…m3u8> it cannot decode, so an undeclared/legacy device must be treated as
+   * NOT able to play it (deviceSocket strips live items from its payload). A player new enough
+   * to decode HLS — web/BrightSign/webOS, Android via ExoPlayer, Tizen natively — declares it
+   * for itself. E-ink never declares it. */
+  'playback.hls',
   /* An uploaded HTML bundle (.wgt / .zip) played as a playlist item. Declared by a player that can
    * MOUNT one — today that means loading the server's flattened single-document render, which every
    * player with an iframe can do. It does NOT imply the player can unpack an archive locally, so it

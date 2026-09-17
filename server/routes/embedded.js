@@ -279,7 +279,10 @@ function resolveCurrentItem(deviceId, forceIndex) {
   const tz = resolveDeviceTimezone(device);
 
   const allItems = getPublishedPlaylistItems(playlist_id);
-  const allows = (it) => ScheduleEval.itemShouldPlay(it, Date.now(), tz);
+  // E-ink cannot rasterize a live stream, so a video/hls item is never playable here —
+  // treated as ineligible so PlayOrder skips it and the panel shows the next real item
+  // (or idles if there is none). No attempt to decode a stream to a still frame.
+  const allows = (it) => it && it.mime_type !== 'video/hls' && ScheduleEval.itemShouldPlay(it, Date.now(), tz);
   const modeRow = db.prepare('SELECT published_playback_order FROM playlists WHERE id = ?').get(playlist_id);
   const mode = (modeRow && modeRow.published_playback_order) || 'sequential';
   if (!allItems.length) return null;
@@ -362,7 +365,8 @@ function resolveLayoutItems(deviceId, forceIndex, { advance = true } = {}) {
   if (playlist_id) {
     const device = db.prepare('SELECT id, workspace_id, timezone, reported_timezone FROM devices WHERE id = ?').get(deviceId);
     const tz = resolveDeviceTimezone(device);
-    allItems = getPublishedPlaylistItems(playlist_id).filter((it) => ScheduleEval.itemShouldPlay(it, Date.now(), tz));
+    // Zoned e-ink also skips live streams — they cannot be rasterized to a panel.
+    allItems = getPublishedPlaylistItems(playlist_id).filter((it) => it && it.mime_type !== 'video/hls' && ScheduleEval.itemShouldPlay(it, Date.now(), tz));
   }
 
   // If the device has no items in its assigned playlist, return null so caller returns 404

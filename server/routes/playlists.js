@@ -952,8 +952,11 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
         });
       }
     }
-    if (duration_sec !== undefined && duration_sec !== null && (typeof duration_sec !== 'number' || duration_sec < 1)) {
-      return res.status(400).json({ error: 'duration_sec must be a positive integer' });
+    // 0 is allowed through here (it is the live "stay until skipped" dwell); resolveItemDuration
+    // below coerces a 0 on any NON-live item back to a safe default, so a 0ms advance can never
+    // reach finite media. A negative or non-number is still rejected.
+    if (duration_sec !== undefined && duration_sec !== null && (typeof duration_sec !== 'number' || duration_sec < 0)) {
+      return res.status(400).json({ error: 'duration_sec must be a non-negative integer' });
     }
 
     let content = null;
@@ -1067,8 +1070,13 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
     updates.push('zone_id = ?'); values.push(zone_id || null);
   }
   if (duration_sec !== undefined) {
-    if (typeof duration_sec !== 'number' || duration_sec < 1) {
-      return res.status(400).json({ error: 'duration_sec must be a positive integer' });
+    // A live stream (video/hls) accepts dwell 0 ("stay until skipped"); finite media must stay
+    // >= 1, because 0 self-loops into a black screen. The item's content mime decides which.
+    const liveItem = !!(item.content_id
+      && db.prepare("SELECT 1 AS live FROM content WHERE id = ? AND mime_type = 'video/hls'").get(item.content_id));
+    const minDur = liveItem ? 0 : 1;
+    if (typeof duration_sec !== 'number' || duration_sec < minDur) {
+      return res.status(400).json({ error: liveItem ? 'duration_sec must be 0 or a positive integer' : 'duration_sec must be a positive integer' });
     }
     updates.push('duration_sec = ?');
     values.push(duration_sec);

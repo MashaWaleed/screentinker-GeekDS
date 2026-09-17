@@ -35,8 +35,10 @@
 
   function detect() {
     var caps = [
-      // Playback surface — all implemented in player.js on every Tizen build.
-      'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+      // Playback surface — all implemented in player.js on every Tizen build. A commercial Tizen
+      // panel plays HLS (.m3u8) natively on a plain HTML5 <video>, so playback.hls is declared
+      // unconditionally alongside playback.video (a video/hls item is just a <video src=remote_url>).
+      'playback.video', 'playback.hls', 'playback.image', 'playback.widget', 'playback.youtube',
       'playback.zones', 'playback.transitions', 'playback.pip',
       /* Mounting a server-flattened HTML bundle needs nothing this player does not already have —
        * it is the widget iframe with a different URL and a sandbox attribute. Declared statically

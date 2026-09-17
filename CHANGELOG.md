@@ -4,6 +4,19 @@
 
 ### Added
 
+**Live TV / IPTV as a playlist item.** Add a **live stream** in the content library: an HLS
+(`.m3u8`) URL the screen opens itself. The URL can be a LAN address (venue and hotel IPTV live on
+10.x / `.local`), because ScreenTinker never fetches or restreams it: the bytes go straight from
+your source to the screen, so a 5 Mbps channel on 40 screens is not our WAN bill. A live item is
+ordinary content (`video/hls`): it takes tags, schedules, from/to windows, conditions, fit and
+weight, and shuffles like anything else. Its duration is **dwell** (how long to stay on the channel,
+default 5 minutes); set it to 0 to stay until the item is skipped by a schedule, a condition, or the
+playlist moving on. Plays on the web player (native HLS on Safari / BrightSign / webOS, and a
+lazily-loaded bundled hls.js on Chrome), Tizen, and native Android (ExoPlayer). E-ink skips live
+items, and a player too old to know about `video/hls` is not sent them, so nothing sits on a black
+screen. To play a UDP or RTSP source, point the live-stream URL at an HLS output you run on site;
+ScreenTinker does not run that sidecar for you.
+
 **Tags and metadata on content, and shuffle / weighted-random playlists.** Tag a file in the
 library (`promo, lobby`) or attach key=value metadata. A playlist item can skip unless it has (or
 lacks) a tag, or unless a metadata field matches, using the same condition picker as the

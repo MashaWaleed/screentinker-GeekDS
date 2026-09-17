@@ -1092,6 +1092,12 @@ function renderItems(items) {
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${item.child_playlist_id
           ? `<span style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.nested_duration_hint'))}">${esc(t('playlist.plays_through'))}</span>`
+          : item.mime_type === 'video/hls'
+          // A live stream's duration is DWELL (how long to stay on the channel), not clip length.
+          // 0 = stay until the item is skipped (window / enabled / play_when / the playlist advances).
+          ? `<label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.dwell_hint'))}">${t('playlist.dwell')}</label>
+        <input type="number" class="input item-duration" data-item-id="${item.id}" data-live="1" value="${item.duration_sec || 0}" min="0" title="${esc(t('playlist.dwell_hint'))}" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
+        <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`
           : `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.duration')}</label>
         <input type="number" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`}
@@ -1130,8 +1136,10 @@ function renderItems(items) {
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
     input.addEventListener('change', async (e) => {
       const itemId = e.target.dataset.itemId;
+      // A live stream accepts 0 (dwell 0 = stay until skipped); everything else needs >= 1.
+      const isLive = e.target.dataset.live === '1';
       const val = parseInt(e.target.value, 10);
-      if (!val || val < 1) { e.target.value = 10; return; }
+      if (Number.isNaN(val) || val < (isLive ? 0 : 1)) { e.target.value = isLive ? 0 : 10; return; }
       try {
         await api.updatePlaylistItem(currentPlaylistId, itemId, { duration_sec: val });
         refreshAfterMutation();

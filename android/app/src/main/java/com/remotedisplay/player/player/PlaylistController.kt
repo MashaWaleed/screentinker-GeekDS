@@ -277,7 +277,12 @@ class PlaylistController(
         // update was de-duped, and the player kept its old items — including the old rev, so the
         // render URL never changed and the WebView reuse held. The screen only caught up on an app
         // restart. Found on the emulator; the code read looked correct without it.
-        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + it.widgetRev + "|" + (if (it.muted) "m" else "") + "|" +
+        // mimeType + remoteUrl are part of the structure: a live HLS channel is shaped exactly like a
+        // remote MP4 / YouTube item (a remote_url + a video/* mime), so its identity is that URL and
+        // that type. Including them means editing a channel's .m3u8 URL, or flipping a remote item's
+        // mime, re-renders in place instead of being de-duped and silently ignored. durationSec stays
+        // OUT on purpose — it is DWELL, applied live below without a restart.
+        fun sig(it: PlaylistItem) = it.contentId + "|" + (it.widgetId ?: "") + "|" + it.mimeType + "|" + (it.remoteUrl ?: "") + "|" + it.widgetRev + "|" + (if (it.muted) "m" else "") + "|" +
             it.schedules.joinToString(";") { b ->
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
             } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
@@ -566,6 +571,14 @@ class PlaylistController(
     private fun endsOnTimer(item: PlaylistItem): Boolean =
         ItemTiming.endsOnTimer(item.mimeType, item.isWidget)
 
+    /**
+     * A live HLS channel: shaped exactly like a remote video (a remote_url + a video mime), but its
+     * stream never reports STATE_ENDED, so onVideoComplete never fires. Timing is driven by DWELL
+     * (durationSec = how long to stay on the channel), not by clip length. A dwell of 0/absent means
+     * "stay until the schedule makes it ineligible"; a dwell > 0 advances on a timer like any item.
+     */
+    private fun isLiveStream(item: PlaylistItem): Boolean = item.mimeType == "video/hls"
+
     private fun playCurrentItem() {
         cancelAdvance()
         cancelRetry()
@@ -597,6 +610,16 @@ class PlaylistController(
             // contract shared with the web/Tizen players). A raw durationSec*1000 here let a
             // solo fullscreen widget with duration_sec=0 schedule a 0ms advance -> self-loop.
             scheduleAdvance(slotMs(item))
+        } else if (!wallFollower && isLiveStream(item)) {
+            // Live HLS channel. It ends on NEITHER a timer (endsOnTimer is false for a video mime) nor
+            // a completion callback (the stream never fires STATE_ENDED), so without one of these two
+            // branches it would sit forever. durationSec is DWELL, not clip length:
+            //   dwell > 0  -> a finite stay: advance on a timer like any timed item.
+            //   dwell 0/absent -> stay on the channel until its schedule window closes (or an external
+            //                     advance). scheduleLiveDwellRecheck() polls eligibility and skips the
+            //                     instant it becomes ineligible, so it never spins.
+            if (item.durationSec > 0) scheduleAdvance(item.durationSec.toLong() * 1000L)
+            else scheduleLiveDwellRecheck()
         }
     }
 
@@ -650,6 +673,12 @@ class PlaylistController(
         val slots = ArrayList<Triple<Int, Long, Long>>()   // index, startMs, durMs
         for (i in items.indices) {
             if (!scheduleAllows(items[i])) continue
+            // A dwell-0 live HLS channel is INFINITE (its stream never ends and it declares no finite
+            // slot length). On the clock scheduler it would swallow the whole period and desync every
+            // synced member, so it is INELIGIBLE here and skipped. A dwell>0 live channel has a finite
+            // slot (its durationSec) and participates normally. Solo playback is unaffected — it never
+            // calls this; it plays the channel and holds via scheduleLiveDwellRecheck().
+            if (isLiveStream(items[i]) && items[i].durationSec <= 0) continue
             val d = slotMs(items[i]); slots.add(Triple(i, acc, d)); acc += d
         }
         if (slots.isEmpty() || acc <= 0L) return null
@@ -738,6 +767,22 @@ class PlaylistController(
                 // start, because a fresh panel always gets the playlist before the media.
                 val idx = PlaylistSelection.recheckIndex(items.size, currentIndex, hasContentOnScreen) { playableNow(it) }
                 if (idx >= 0) { currentIndex = idx; playCurrentItem() } else onContentNotReady()
+            }
+        }
+        handler.postDelayed(retryRunnable!!, CONTENT_RECHECK_MS)
+    }
+
+    // A dwell-0 live HLS channel has no advance timer and its stream never ends, so nothing would
+    // otherwise move off it when its schedule window closes. Poll eligibility on the standard recheck
+    // cadence: advance the moment scheduleAllows() flips false, otherwise leave the channel playing
+    // untouched (no restart, no busy-loop). This is the ONLY thing that advances a dwell-0 live item.
+    private fun scheduleLiveDwellRecheck() {
+        cancelRetry()
+        retryRunnable = Runnable {
+            val item = currentItem
+            if (isRunning && !wallFollower && item != null && isLiveStream(item) && item.durationSec <= 0) {
+                if (!scheduleAllows(item)) next()
+                else scheduleLiveDwellRecheck()
             }
         }
         handler.postDelayed(retryRunnable!!, CONTENT_RECHECK_MS)

@@ -495,9 +495,22 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   const device = db.prepare(`SELECT r.playlist_id AS playlist_id, r.source AS playlist_source,
       r.layout_id AS layout_id, d.orientation, d.background_color, d.wall_id, d.timezone, d.reported_timezone,
       d.triggers_accept_http, d.triggers_accept_udp, d.trigger_secret, d.trigger_http_port,
-      d.trigger_udp_port, d.trigger_multicast_group, d.trigger_clear_all_token
+      d.trigger_udp_port, d.trigger_multicast_group, d.trigger_clear_all_token,
+      d.capabilities, d.platform, d.android_version, d.client_type
       FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
       WHERE d.id = ?`).get(deviceId);
+
+  /*
+   * P2 (additive): a live HLS item must never reach a device that cannot decode it. A v1.9.28
+   * player would hang on a black <video src=…m3u8>, and e-ink cannot render a stream at all —
+   * neither declares playback.hls, and it is in no baseline, so supports() is false for them and
+   * true only for a player that declared it. Legacy NULL capabilities fall to the baseline, which
+   * also lacks it, so they are stripped too. Drop live assignments BEFORE they are sent. (The
+   * device-free dashboard preview keeps them — assemblePayload is unchanged.)
+   */
+  const deviceSupportsHls = capsLib.supports(device, 'playback.hls');
+  const dropLiveIfUnsupported = (items) =>
+    (deviceSupportsHls || !Array.isArray(items)) ? items : items.filter((a) => !(a && a.mime_type === 'video/hls'));
 
   let assignments = [];
   let playback_order = 'sequential';
@@ -506,7 +519,8 @@ function buildPlaylistPayloadUnchecked(deviceId) {
     if (playlist?.published_snapshot) {
       try { assignments = JSON.parse(playlist.published_snapshot); } catch (e) { assignments = []; }
       refreshWidgetRevs(assignments);
-      refreshContentRevs(assignments);
+      refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
+      assignments = dropLiveIfUnsupported(assignments);
     }
     if (playlist && playlist.published_playback_order) playback_order = playlist.published_playback_order;
   }
@@ -535,6 +549,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
           try { items = JSON.parse(pl.published_snapshot); } catch (e) { items = []; }
           refreshWidgetRevs(items);
           refreshContentRevs(items);
+          items = dropLiveIfUnsupported(items);   // a trigger playlist can carry a live item too
         }
       }
       triggers.push(projectTrigger(t, items));

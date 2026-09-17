@@ -11,6 +11,14 @@ screen can be watched by many dashboards without asking the device to encode a s
 each viewer. Without go2rtc, nothing changes: live view stays the screenshot stream, and the
 Devices page works exactly as before.
 
+> **Not the same as live PLAYBACK (IPTV).** go2rtc here is the *dashboard watching a screen* —
+> the opposite direction from a screen *playing* a live channel. To play a live TV/IPTV channel
+> *on* a screen, add a **live stream** in the content library: a `video/hls` item whose URL is an
+> `.m3u8` the player opens on its own LAN. ScreenTinker never ingests or restreams it. If your
+> source is UDP or RTSP, point that `video/hls` URL at an HLS output you run on site (for example a
+> go2rtc instance of your own) — ScreenTinker does not run that sidecar for you and does not fetch
+> the stream.
+
 ## The shape of it
 
 ```

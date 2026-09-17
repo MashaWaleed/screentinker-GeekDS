@@ -120,6 +120,19 @@ export function render(container) {
         <input type="text" id="youtubeNameInput" class="input" placeholder="${t('content.youtube_name_placeholder')}">
         <button class="btn btn-primary" id="addYoutubeBtn">${t('content.youtube_add_btn')}</button>
       </div>
+      <div style="width:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="23 7 16 12 23 17 23 7"/>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+          </svg>
+          ${t('content.hls')}
+        </div>
+        <p style="font-size:12px;color:var(--text-muted)">${t('content.hls_desc')}</p>
+        <input type="text" id="hlsUrlInput" class="input" placeholder="${t('content.hls_url_placeholder')}">
+        <input type="text" id="hlsNameInput" class="input" placeholder="${t('content.hls_name_placeholder')}">
+        <button class="btn btn-primary" id="addHlsBtn">${t('content.hls_add_btn')}</button>
+      </div>
     </div>
     </div>
 
@@ -130,6 +143,7 @@ export function render(container) {
         <option value="video" ${state.type === 'video' ? 'selected' : ''}>${t('content.filter_type_video')}</option>
         <option value="image" ${state.type === 'image' ? 'selected' : ''}>${t('content.filter_type_image')}</option>
         <option value="youtube" ${state.type === 'youtube' ? 'selected' : ''}>${t('content.filter_type_youtube')}</option>
+        <option value="live" ${state.type === 'live' ? 'selected' : ''}>${t('content.filter_type_live')}</option>
         <option value="web" ${state.type === 'web' ? 'selected' : ''}>${t('content.filter_type_web')}</option>
         <option value="bundle" ${state.type === 'bundle' ? 'selected' : ''}>${t('content.filter_type_bundle')}</option>
       </select>
@@ -227,6 +241,27 @@ export function render(container) {
       showToast(t('content.toast.youtube_added'), 'success');
       document.getElementById('youtubeUrlInput').value = '';
       document.getElementById('youtubeNameInput').value = '';
+      loadContent();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // IPTV: add a live HLS stream. The screen opens the URL itself (it may be a LAN
+  // address); ScreenTinker never pulls the video, so the private-URL error from the
+  // server-fetched remote path never applies here.
+  document.getElementById('addHlsBtn').addEventListener('click', async () => {
+    const url = document.getElementById('hlsUrlInput').value.trim();
+    const name = document.getElementById('hlsNameInput').value.trim();
+    if (!url) {
+      showToast(t('content.error_enter_hls_url'), 'error');
+      return;
+    }
+    try {
+      await api.addHlsContent(url, name);
+      showToast(t('content.toast.hls_added'), 'success');
+      document.getElementById('hlsUrlInput').value = '';
+      document.getElementById('hlsNameInput').value = '';
       loadContent();
     } catch (err) {
       showToast(err.message, 'error');
@@ -560,7 +595,7 @@ async function loadContent() {
           <div class="content-item-name" title="${esc(c.filename)}">${esc(c.filename)}</div>
           ${Array.isArray(c.tags) && c.tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${c.tags.map((tg) => `<span data-tag="${esc(tg)}" style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);cursor:pointer">#${esc(tg)}</span>`).join('')}</div>` : ''}
           <div class="content-item-size">
-            ${c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
+            ${c.mime_type === 'video/hls' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
             ${c.duration_sec ? ` &middot; ${Math.floor(c.duration_sec / 60)}:${String(Math.floor(c.duration_sec % 60)).padStart(2, '0')}` : ''}
             ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
             ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
