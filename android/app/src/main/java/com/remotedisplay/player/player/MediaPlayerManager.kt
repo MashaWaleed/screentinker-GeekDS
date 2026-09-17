@@ -574,7 +574,20 @@ class MediaPlayerManager(
 
         exoPlayer?.apply {
             volume = if (muted || wallMute || triggerMute) 0f else 1f
-            setMediaItem(MediaItem.fromUri(Uri.parse(url)))
+            val item = MediaItem.fromUri(Uri.parse(url))
+            if (url.startsWith("rtsp://", ignoreCase = true)) {
+                // RTSP camera/stream: force TCP (interleaved) so it works through NAT/firewalls and on
+                // cameras that refuse UDP. ExoPlayer plays it via the media3-exoplayer-hls sibling
+                // media3-exoplayer-rtsp module; a dead camera lands in a player error -> onVideoComplete
+                // skips it, same as HLS.
+                setMediaSource(
+                    androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
+                        .setForceUseRtpTcp(true)
+                        .createMediaSource(item)
+                )
+            } else {
+                setMediaItem(item)   // ExoPlayer infers HLS/DASH/progressive from the URL/content
+            }
             prepare()
             playWhenReady = true
         }

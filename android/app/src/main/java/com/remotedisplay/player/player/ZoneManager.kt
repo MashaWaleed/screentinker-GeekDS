@@ -206,7 +206,7 @@ class ZoneManager(
         val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
-        val isLive = mimeType == "video/hls"   // a live HLS stream: bytes never end -> dwell, not STATE_ENDED
+        val isLive = mimeType == "video/hls" || mimeType == "video/rtsp"   // live stream: bytes never end -> dwell, not STATE_ENDED
         val remoteUrl = if (a.isNull("remote_url")) null else a.optString("remote_url", null)
         val widgetType = if (a.isNull("widget_type")) null else a.optString("widget_type", null)
         val contentId = if (a.isNull("content_id")) null else a.optString("content_id", null)
@@ -270,7 +270,17 @@ class ZoneManager(
                     layoutParams = params
                 }
                 val exoPlayer = ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
+                    if (mimeType == "video/rtsp") {
+                        // RTSP camera in a zone: force TCP so it works through NAT/firewalls and on
+                        // cameras that refuse UDP (media3-exoplayer-rtsp).
+                        setMediaSource(
+                            androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
+                                .setForceUseRtpTcp(true)
+                                .createMediaSource(MediaItem.fromUri(src))
+                        )
+                    } else {
+                        setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
+                    }
                     // A live stream never ends, so REPEAT is moot; a normal clip in a lone zone loops.
                     repeatMode = if (multi && !isLive) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ALL
                     volume = if (isMuted) 0f else 1f

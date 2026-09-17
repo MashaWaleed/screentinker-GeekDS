@@ -49,6 +49,10 @@ object PlayerCapabilities {
                 // natively once media3-exoplayer-hls is on the classpath — this build bundles it — so
                 // the claim is unconditional, exactly like playback.video/playback.youtube beside it.
                 "playback.hls",
+                // Native RTSP camera/stream playback via ExoPlayer + media3-exoplayer-rtsp (bundled).
+                // Android-only capability: no browser/BrightSign/Tizen/e-ink player declares it, so the
+                // server's strip keeps rtsp items off screens that cannot open rtsp://.
+                "playback.rtsp",
                 "playback.zones", "playback.transitions", "playback.pip",
                 // Mounting a server-flattened HTML bundle is the widget WebView with a different
                 // URL, so this build can always do it. It says nothing about offline: nothing here

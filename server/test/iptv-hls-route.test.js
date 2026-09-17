@@ -80,11 +80,26 @@ test('POST /hls accepts a public .m3u8 and derives a name when none is given', a
   assert.ok(r.body.filename, 'a name is derived from the URL');
 });
 
-test('POST /hls refuses non-HLS and non-web schemes', async () => {
-  for (const url of ['rtsp://10.0.0.1/live', 'udp://239.0.0.1:1234', 'file:///etc/passwd', 'https://user:pw@10.0.0.1/x.m3u8']) {
+test('POST /hls accepts an rtsp:// camera URL as video/rtsp (credentials allowed)', async () => {
+  const r = await jfetch('/api/content/hls', post(S.jwt, { url: 'rtsp://admin:pass@10.0.0.7:554/h264', name: 'Front door cam' }));
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.mime_type, 'video/rtsp');
+  assert.equal(r.body.remote_url, 'rtsp://admin:pass@10.0.0.7:554/h264');
+  S.rtspId = r.body.id;
+});
+
+test('POST /hls refuses non-live schemes (udp/file), and a plain http page', async () => {
+  for (const url of ['udp://239.0.0.1:1234', 'file:///etc/passwd', 'https://user:pw@10.0.0.1/x.m3u8', 'https://example.com/page']) {
     const r = await jfetch('/api/content/hls', post(S.jwt, { url }));
     assert.equal(r.status, 400, `${url} must be refused`);
   }
+});
+
+test('the live type bucket includes rtsp; video/web exclude it', async () => {
+  const live = await jfetch('/api/content?type=live', auth(S.jwt));
+  assert.ok(live.body.some((c) => c.mime_type === 'video/rtsp'), 'type=live includes the camera');
+  const video = await jfetch('/api/content?type=video', auth(S.jwt));
+  assert.ok(video.body.every((c) => c.mime_type !== 'video/rtsp'), 'type=video excludes rtsp');
 });
 
 test('POST /hls refuses a URL that is not a stream (no .m3u8), so junk is caught early', async () => {
@@ -161,7 +176,7 @@ test('a live row accepts a new LAN URL (player-opened gate) but not a non-m3u8',
 
 test('the library filters live streams into their own bucket, out of video and web', async () => {
   const live = await jfetch('/api/content?type=live', auth(S.jwt));
-  assert.ok(live.body.every((c) => c.mime_type === 'video/hls'), 'type=live returns only live streams');
+  assert.ok(live.body.every((c) => (c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp')), 'type=live returns only live streams');
   assert.ok(live.body.some((c) => c.id === S.hlsId), 'and includes the one we added');
 
   const video = await jfetch('/api/content?type=video', auth(S.jwt));

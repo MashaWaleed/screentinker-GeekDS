@@ -12,7 +12,7 @@ const DEFAULT_ITEM_DURATION = 10;
 // length. Default 5 minutes when added; 0 is a valid, meaningful value ("stay until skipped")
 // and is SAFE only because every player special-cases a live item's 0 dwell (no finite advance
 // timer). It must never be applied to finite media, where 0 self-loops into a black screen.
-const LIVE_MIME = 'video/hls';
+const LIVE_MIMES = ['video/hls', 'video/rtsp'];
 const LIVE_DEFAULT_DWELL = 300;
 
 // A probe that reports longer than this is a broken container (streams and truncated files
@@ -43,7 +43,7 @@ function resolveItemDuration(requested, content) {
   // content length (it has none). 0 is safe here BECAUSE the item is live; the players gate on it.
   // null/undefined/'' mean "no value given" -> the default; only an EXPLICIT 0 stays 0 (Number(null)
   // is 0, so guard the not-given cases before coercing).
-  if (content && content.mime_type === LIVE_MIME) {
+  if (content && LIVE_MIMES.indexOf(content.mime_type) !== -1) {
     if (requested === undefined || requested === null || requested === '') return LIVE_DEFAULT_DWELL;
     if (Number.isFinite(n) && n >= 0) return Math.floor(n);
     return LIVE_DEFAULT_DWELL;
@@ -52,4 +52,4 @@ function resolveItemDuration(requested, content) {
   return contentDefaultDuration(content) ?? DEFAULT_ITEM_DURATION;
 }
 
-module.exports = { resolveItemDuration, contentDefaultDuration, DEFAULT_ITEM_DURATION, MAX_CONTENT_DURATION, LIVE_DEFAULT_DWELL, LIVE_MIME };
+module.exports = { resolveItemDuration, contentDefaultDuration, DEFAULT_ITEM_DURATION, MAX_CONTENT_DURATION, LIVE_DEFAULT_DWELL, LIVE_MIMES };

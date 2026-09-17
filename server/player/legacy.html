@@ -5065,7 +5065,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   });
   div.innerHTML = "";
   const isYoutube = a.mime_type === "video/youtube";
-  const isHls = a.mime_type === LIVE_MIME;
+  const isHls = a.mime_type === "video/hls";
   const isVideo = !isYoutube && !isHls && ((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/"));
   const src = mediaUrl(a);
   const dur = (a.duration_sec || 10) * 1e3;
@@ -5099,11 +5099,12 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
       if (dwell > 0) {
         timers[zone.id] = setTimeout(advance, dwell * 1e3);
       } else {
+        const recheckMs = 6e4;
         const recheck = () => {
-          if (zoneNextActive(items, index, zone.id) === index) timers[zone.id] = setTimeout(recheck, LIVE_DWELL_RECHECK_MS);
+          if (zoneNextActive(items, index, zone.id) === index) timers[zone.id] = setTimeout(recheck, recheckMs);
           else advance();
         };
-        timers[zone.id] = setTimeout(recheck, LIVE_DWELL_RECHECK_MS);
+        timers[zone.id] = setTimeout(recheck, recheckMs);
       }
     }
   } else if (isVideo) {

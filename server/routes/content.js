@@ -22,7 +22,7 @@ const { normalizeTags, normalizeMeta, parseTags, parseMeta } = require('../lib/c
 const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-files');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
-const { LIVE_MIME, validateRemoteUrl, validatePlayerOpenedUrl, looksLikeHlsUrl } = require('../lib/remote-url');
+const { LIVE_MIME, RTSP_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
 
 // Multer captures file.originalname directly from the multipart filename header,
 // bypassing sanitizeBody, so it is cleaned here instead.
@@ -95,10 +95,10 @@ router.get('/', (req, res) => {
     case 'image':   sql += " AND mime_type LIKE 'image/%'"; break;
     // Live streams are their own bucket (operators need to find channels), so they
     // are excluded from the plain uploaded-video bucket and from the web-page bucket.
-    case 'video':   sql += " AND mime_type LIKE 'video/%' AND mime_type != 'video/youtube' AND mime_type != 'video/hls'"; break;
+    case 'video':   sql += " AND mime_type LIKE 'video/%' AND mime_type NOT IN ('video/youtube','video/hls','video/rtsp')"; break;
     case 'youtube': sql += " AND mime_type = 'video/youtube'"; break;
-    case 'live':    sql += " AND mime_type = 'video/hls'"; break;
-    case 'web':     sql += " AND remote_url IS NOT NULL AND mime_type != 'video/youtube' AND mime_type != 'video/hls'"; break;
+    case 'live':    sql += " AND mime_type IN ('video/hls','video/rtsp')"; break;
+    case 'web':     sql += " AND remote_url IS NOT NULL AND mime_type NOT IN ('video/youtube','video/hls','video/rtsp')"; break;
     // HTML bundles are their own bucket: they are neither image nor video, and without a case here
     // they appear only under "all" — present in the library and unfindable.
     case 'audio':   sql += " AND mime_type LIKE 'audio/%'"; break;
@@ -304,21 +304,20 @@ router.post('/youtube', async (req, res) => {
   }
 });
 
-// Add a live HLS stream (IPTV). Same shape as YouTube: a URL the PLAYER opens on
-// the LAN. The SERVER NEVER FETCHES IT — no HEAD/GET here (that would be both SSRF
-// and a WAN pull of a 24/7 stream across every screen). We trust the URL SHAPE; a
-// junk stream fails to a skip on the player. Private / .local hosts are allowed
-// (venue IPTV is 10.x / .local), which is why this uses validatePlayerOpenedUrl.
+// Add a live stream (IPTV / camera). Same shape as YouTube: a URL the PLAYER opens on
+// the LAN. The SERVER NEVER FETCHES IT — no HEAD/GET here (that would be both SSRF and
+// a WAN pull of a 24/7 stream across every screen). We trust the URL SHAPE; a junk
+// stream fails to a skip on the player. An http(s) .m3u8 becomes video/hls (all players);
+// an rtsp:// URL becomes video/rtsp (Android/ExoPlayer only — the deviceSocket strip keeps
+// it off screens that cannot open rtsp). Private / .local hosts and rtsp credentials are
+// allowed because the screen, not the server, opens the URL on its own LAN.
 router.post('/hls', (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding a live stream.' });
     const { url, name } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
-    const urlErr = validatePlayerOpenedUrl(url);
-    if (urlErr) return res.status(urlErr.status).json({ error: urlErr.error });
-    if (!looksLikeHlsUrl(url)) {
-      return res.status(400).json({ error: 'That does not look like an HLS stream. The URL should point at an .m3u8 playlist.' });
-    }
+    const kind = classifyLiveUrl(url);
+    if (kind.error) return res.status(kind.error.status).json({ error: kind.error.error });
 
     const id = uuidv4();
     const filename = name || url.split('/').pop()?.split('?')[0] || 'Live stream';
@@ -328,7 +327,7 @@ router.post('/hls', (req, res) => {
     db.prepare(`
       INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url)
       VALUES (?, ?, ?, ?, '', ?, 0, ?)
-    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), LIVE_MIME, url);
+    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), kind.mime, url);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
@@ -567,15 +566,16 @@ router.put('/:id', (req, res) => {
    * A live stream is a different KIND of item, the same way an HTML bundle is (see the
    * replace-boundary note below): mime_type is what every player switches on, and its URL
    * is validated by a different gate (player-opened, LAN allowed) than a server-fetched
-   * remote. So turning a youtube/web/video row INTO video/hls, or a video/hls row into
-   * anything else, is refused here — delete it and add the right kind instead.
+   * remote. So turning a youtube/web/video row INTO a live stream, or a live stream into
+   * anything else, is refused here — delete it and add the right kind instead. Switching a
+   * live item BETWEEN transports (video/hls <-> video/rtsp) is allowed: it is still live.
    */
-  const wasHls = content.mime_type === LIVE_MIME;
+  const wasLive = LIVE_MIMES.indexOf(content.mime_type) !== -1;
   const targetMime = mime_type !== undefined ? mime_type : content.mime_type;
-  const targetIsHls = targetMime === LIVE_MIME;
-  if (wasHls !== targetIsHls) {
+  const targetIsLive = LIVE_MIMES.indexOf(targetMime) !== -1;
+  if (wasLive !== targetIsLive) {
     return res.status(400).json({
-      error: wasHls
+      error: wasLive
         ? 'This item is a live stream — replace its URL, or delete it and add the new content.'
         : 'A live stream cannot replace this item. Add it as a new live stream instead.',
     });
@@ -583,13 +583,21 @@ router.put('/:id', (req, res) => {
   if (mime_type !== undefined) set('mime_type', mime_type);
   if (remote_url !== undefined) {
     if (remote_url) {
-      // A video/hls URL is opened by the player on its LAN, never fetched by the server,
-      // so it uses the player-opened gate (private hosts allowed); everything else stays
-      // on the SSRF gate.
-      const urlErr = targetIsHls ? validatePlayerOpenedUrl(remote_url) : validateRemoteUrl(remote_url);
-      if (urlErr) return res.status(urlErr.status).json({ error: urlErr.error });
-      if (targetIsHls && !looksLikeHlsUrl(remote_url)) {
-        return res.status(400).json({ error: 'That does not look like an HLS stream. The URL should point at an .m3u8 playlist.' });
+      // A live URL is opened by the player on its LAN, never fetched by the server, so it
+      // uses the player-opened gate for its transport (private hosts / rtsp creds allowed);
+      // everything else stays on the SSRF gate.
+      if (targetIsLive) {
+        const urlErr = targetMime === RTSP_MIME ? validateRtspUrl(remote_url) : validatePlayerOpenedUrl(remote_url);
+        if (urlErr) return res.status(urlErr.status).json({ error: urlErr.error });
+        if (targetMime === LIVE_MIME && !looksLikeHlsUrl(remote_url)) {
+          return res.status(400).json({ error: 'That does not look like an HLS stream. The URL should point at an .m3u8 playlist.' });
+        }
+        if (targetMime === RTSP_MIME && !looksLikeRtspUrl(remote_url)) {
+          return res.status(400).json({ error: 'A camera stream URL must use rtsp://.' });
+        }
+      } else {
+        const urlErr = validateRemoteUrl(remote_url);
+        if (urlErr) return res.status(urlErr.status).json({ error: urlErr.error });
       }
     }
     set('remote_url', remote_url || null);

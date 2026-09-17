@@ -31,7 +31,7 @@ const readF = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 // ------------------------------------------------------------------ URL gates (pure)
 
-const { validateRemoteUrl, validatePlayerOpenedUrl, looksLikeHlsUrl, LIVE_MIME } = require('../lib/remote-url');
+const { validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl, LIVE_MIME, RTSP_MIME } = require('../lib/remote-url');
 
 test('validatePlayerOpenedUrl ALLOWS private / .local http(s) hosts (venue IPTV lives on the LAN)', () => {
   for (const u of [
@@ -73,16 +73,37 @@ test('looksLikeHlsUrl matches an m3u8 shape without fetching anything', () => {
   assert.equal(LIVE_MIME, 'video/hls');
 });
 
+// ------------------------------------------------------------------ RTSP (native, Android-only)
+
+test('classifyLiveUrl maps rtsp:// to video/rtsp (credentials allowed) and http .m3u8 to video/hls', () => {
+  assert.deepEqual(classifyLiveUrl('rtsp://10.0.0.5:554/stream'), { mime: RTSP_MIME });
+  assert.deepEqual(classifyLiveUrl('rtsp://admin:pass@192.168.1.10/h264'), { mime: RTSP_MIME }, 'camera credentials are allowed for rtsp');
+  assert.deepEqual(classifyLiveUrl('https://cdn.example.com/live.m3u8'), { mime: LIVE_MIME });
+  assert.equal(RTSP_MIME, 'video/rtsp');
+});
+
+test('classifyLiveUrl rejects non-live URLs', () => {
+  for (const u of ['udp://239.0.0.1:1234', 'file:///etc/passwd', 'https://example.com/page.html']) {
+    assert.ok(classifyLiveUrl(u).error, `${u} must be rejected`);
+  }
+  assert.ok(looksLikeRtspUrl('rtsp://x/y'));
+  assert.ok(!looksLikeRtspUrl('https://x/y.m3u8'));
+  assert.ok(validateRtspUrl('http://x/y'), 'the rtsp gate rejects a non-rtsp scheme');
+  assert.equal(validateRtspUrl('rtsp://x/y'), null, 'and accepts rtsp://');
+});
+
 // ------------------------------------------------------------------ dwell default (pure)
 
 const { resolveItemDuration, LIVE_DEFAULT_DWELL } = require('../lib/item-duration');
 
-test('a live stream defaults to a 5-minute dwell and KEEPS an explicit 0 (stay until skipped)', () => {
-  const live = { mime_type: 'video/hls', duration_sec: null };
-  assert.equal(resolveItemDuration(undefined, live), LIVE_DEFAULT_DWELL);
-  assert.equal(resolveItemDuration(null, live), 300);
-  assert.equal(resolveItemDuration(0, live), 0, 'dwell 0 is a valid live value and must survive');
-  assert.equal(resolveItemDuration(30, live), 30);
+test('a live stream (hls OR rtsp) defaults to a 5-minute dwell and KEEPS an explicit 0', () => {
+  for (const mime of ['video/hls', 'video/rtsp']) {
+    const live = { mime_type: mime, duration_sec: null };
+    assert.equal(resolveItemDuration(undefined, live), LIVE_DEFAULT_DWELL, mime);
+    assert.equal(resolveItemDuration(null, live), 300, mime);
+    assert.equal(resolveItemDuration(0, live), 0, `${mime}: dwell 0 must survive`);
+    assert.equal(resolveItemDuration(30, live), 30, mime);
+  }
 });
 
 test('dwell 0 is refused for NON-live media (a 0ms advance self-loops into a black screen)', () => {
@@ -95,10 +116,12 @@ test('dwell 0 is refused for NON-live media (a 0ms advance self-loops into a bla
 
 const caps = require('../lib/player-capabilities');
 
-test('playback.hls is in the vocabulary but in NO baseline (an undeclared/legacy device cannot play it)', () => {
-  assert.ok(caps.CAP_SET.has('playback.hls'), 'playback.hls must be a known capability');
-  for (const [platform, list] of Object.entries(caps.BASELINE)) {
-    assert.ok(!list.includes('playback.hls'), `playback.hls must NOT be in the ${platform} baseline`);
+test('playback.hls / playback.rtsp are in the vocabulary but in NO baseline', () => {
+  for (const cap of ['playback.hls', 'playback.rtsp']) {
+    assert.ok(caps.CAP_SET.has(cap), `${cap} must be a known capability`);
+    for (const [platform, list] of Object.entries(caps.BASELINE)) {
+      assert.ok(!list.includes(cap), `${cap} must NOT be in the ${platform} baseline`);
+    }
   }
 });
 
@@ -124,7 +147,7 @@ test('every player switches on video/hls (web, legacy, Tizen, Android)', () => {
 test('live streams are first-class in multi-zone layouts too (web zone + Android ZoneManager)', () => {
   const web = readF('server/player/index.html');
   // The zone renderer routes video/hls through the shared native+hls.js attach, not a bare <video>.
-  assert.match(web, /const isHls = a\.mime_type === LIVE_MIME/, 'showZoneItem classifies a live item');
+  assert.match(web, /const isHls = a\.mime_type === 'video\/hls'/, 'showZoneItem classifies a live item');
   assert.match(web, /attachHlsTo\(/, 'and attaches it via the hls.js-capable helper');
   const zm = readF('android/app/src/main/java/com/remotedisplay/player/player/ZoneManager.kt');
   assert.match(zm, /val isLive = mimeType == "video\/hls"/, 'ZoneManager recognises a live stream');
@@ -136,6 +159,22 @@ test('every HLS-capable player DECLARES playback.hls; e-ink and no baseline do n
   assert.match(readF('server/player/index.html'), /'playback\.hls'/, 'web player declares it');
   assert.match(readF('tizen/js/capabilities.js'), /'playback\.hls'/, 'Tizen declares it');
   assert.match(readF('android/app/src/main/java/com/remotedisplay/player/telemetry/PlayerCapabilities.kt'), /"playback\.hls"/, 'Android declares it');
+});
+
+test('native RTSP is wired in the Android player (fullscreen + zones), gated and TCP-forced', () => {
+  const gradle = readF('android/app/build.gradle.kts');
+  assert.match(gradle, /media3-exoplayer-rtsp/, 'the RTSP ExoPlayer module is a dependency');
+  const caps = readF('android/app/src/main/java/com/remotedisplay/player/telemetry/PlayerCapabilities.kt');
+  assert.match(caps, /"playback\.rtsp"/, 'Android declares playback.rtsp');
+  const mpm = readF('android/app/src/main/java/com/remotedisplay/player/player/MediaPlayerManager.kt');
+  assert.match(mpm, /RtspMediaSource/, 'fullscreen path builds an RtspMediaSource');
+  assert.match(mpm, /setForceUseRtpTcp\(true\)/, 'and forces TCP (NAT/firewall/camera-friendly)');
+  const zm = readF('android/app/src/main/java/com/remotedisplay/player/player/ZoneManager.kt');
+  assert.match(zm, /video\/rtsp/, 'ZoneManager handles video/rtsp');
+  assert.match(zm, /RtspMediaSource/, 'zones build an RtspMediaSource too');
+  // No other player claims RTSP (browsers/Tizen cannot open rtsp://).
+  assert.doesNotMatch(readF('server/player/index.html'), /'playback\.rtsp'/, 'the web player must NOT declare playback.rtsp');
+  assert.doesNotMatch(readF('tizen/js/capabilities.js'), /playback\.rtsp/, 'Tizen must NOT declare playback.rtsp');
 });
 
 test('the vendored hls.js is present and served locally (no CDN on an air-gapped LAN)', () => {
@@ -202,7 +241,8 @@ before(async () => {
 
   const snapshot = JSON.stringify([
     { content_id: HLS_CID, mime_type: 'video/hls', remote_url: 'http://10.0.0.9/live.m3u8', duration_sec: 0, sort_order: 0 },
-    { content_id: IMG_CID, mime_type: 'image/png', filepath: 'poster.png', duration_sec: 10, sort_order: 1 },
+    { content_id: 'rtsp-cid', mime_type: 'video/rtsp', remote_url: 'rtsp://10.0.0.9/cam', duration_sec: 0, sort_order: 1 },
+    { content_id: IMG_CID, mime_type: 'image/png', filepath: 'poster.png', duration_sec: 10, sort_order: 2 },
   ]);
   db.prepare("INSERT INTO playlists (id, user_id, name, workspace_id, published_snapshot, published_playback_order) VALUES (?,?,?,?,?, 'sequential')")
     .run(PLID, 'u-iptv', 'iptv', 'ws-iptv', snapshot);
@@ -210,28 +250,35 @@ before(async () => {
   const mkDevice = (id, capsJson) =>
     db.prepare("INSERT INTO devices (id, status, workspace_id, playlist_id, capabilities, platform) VALUES (?, 'online', 'ws-iptv', ?, ?, 'Web/1.0')")
       .run(id, PLID, capsJson);
-  mkDevice('dev-hls', JSON.stringify(['playback.video', 'playback.image', 'playback.hls']));
+  mkDevice('dev-hls', JSON.stringify(['playback.video', 'playback.image', 'playback.hls']));   // web: hls, no rtsp
+  mkDevice('dev-android', JSON.stringify(['playback.video', 'playback.image', 'playback.hls', 'playback.rtsp']));
   mkDevice('dev-nohls', JSON.stringify(['playback.video', 'playback.image']));
-  mkDevice('dev-baseline', null);   // legacy: NULL capabilities -> baseline -> no hls
+  mkDevice('dev-baseline', null);   // legacy: NULL capabilities -> baseline -> no hls/rtsp
   db.pragma('foreign_keys = ON');
 });
 after(() => { try { io.close(); } catch { /* */ } try { httpServer.close(); } catch { /* */ } });
 
-test('a device WITH playback.hls receives the live item', () => {
+test('a web device with playback.hls gets the HLS item but NOT the RTSP item (browsers cannot rtsp)', () => {
   const mimes = buildPlaylistPayload('dev-hls').assignments.map((a) => a.mime_type);
-  assert.ok(mimes.includes('video/hls'), 'live item present for a capable device');
+  assert.ok(mimes.includes('video/hls'), 'HLS present for an hls-capable device');
+  assert.ok(!mimes.includes('video/rtsp'), 'RTSP stripped (no playback.rtsp)');
   assert.ok(mimes.includes('image/png'), 'and the normal item too');
 });
 
-test('a device WITHOUT playback.hls has the live item stripped, keeping the rest', () => {
+test('an Android device (hls + rtsp) receives BOTH live transports', () => {
+  const mimes = buildPlaylistPayload('dev-android').assignments.map((a) => a.mime_type);
+  assert.ok(mimes.includes('video/hls') && mimes.includes('video/rtsp'), 'both live items present');
+});
+
+test('a device WITHOUT playback.hls has BOTH live items stripped, keeping the rest', () => {
   const mimes = buildPlaylistPayload('dev-nohls').assignments.map((a) => a.mime_type);
-  assert.ok(!mimes.includes('video/hls'), 'live item must be dropped');
+  assert.ok(!mimes.includes('video/hls') && !mimes.includes('video/rtsp'), 'both live items dropped');
   assert.ok(mimes.includes('image/png'), 'the rest of the playlist still plays');
 });
 
-test('a legacy device (NULL capabilities -> baseline) has the live item stripped', () => {
+test('a legacy device (NULL capabilities -> baseline) has the live items stripped', () => {
   const mimes = buildPlaylistPayload('dev-baseline').assignments.map((a) => a.mime_type);
-  assert.ok(!mimes.includes('video/hls'), 'baseline lacks playback.hls, so live is stripped');
+  assert.ok(!mimes.includes('video/hls') && !mimes.includes('video/rtsp'), 'baseline lacks both caps');
   assert.ok(mimes.includes('image/png'));
 });
 

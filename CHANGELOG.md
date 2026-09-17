@@ -14,8 +14,16 @@ default 5 minutes); set it to 0 to stay until the item is skipped by a schedule,
 playlist moving on. Plays on the web player (native HLS on Safari / BrightSign / webOS, and a
 lazily-loaded bundled hls.js on Chrome), Tizen, and native Android (ExoPlayer). E-ink skips live
 items, and a player too old to know about `video/hls` is not sent them, so nothing sits on a black
-screen. To play a UDP or RTSP source, point the live-stream URL at an HLS output you run on site;
-ScreenTinker does not run that sidecar for you.
+screen. A live channel works in a full screen or a single zone of a multi-zone layout.
+
+**Native RTSP camera feeds on Android.** The same "Add live stream" also takes an `rtsp://` URL (an
+IP camera or NVR, credentials in the URL allowed) and plays it directly on the **native Android
+player** (ExoPlayer, forced over TCP so it works through firewalls and on cameras that refuse UDP).
+This is Android-only, and gated: the `video/rtsp` item is only ever sent to a screen that declares
+`playback.rtsp`, so browsers, BrightSign/webOS, Tizen and e-ink never receive an rtsp item they
+cannot open. RTSP does not fan out (a camera caps its own concurrent sessions), so for many screens
+off one camera, or for non-Android players, still run an on-site RTSP-to-HLS bridge (for example
+go2rtc) and point a `video/hls` URL at its output.
 
 **Tags and metadata on content, and shuffle / weighted-random playlists.** Tag a file in the
 library (`promo, lobby`) or attach key=value metadata. A playlist item can skip unless it has (or

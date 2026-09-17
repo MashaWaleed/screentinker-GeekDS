@@ -16,12 +16,16 @@
 // private address carries no SSRF: the request leaves the SCREEN, on the same LAN
 // the operator already trusts, not our backend.
 
-// video/hls is the ONLY live mime. A live item is content with this mime + a
-// remote_url; there is no widget, no second content type, no live_sources table.
-const LIVE_MIME = 'video/hls';
+// A live item is content with a live mime + a remote_url the PLAYER opens (no widget,
+// no live_sources table). Two live transports: HLS over http(s) (cross-platform), and
+// RTSP (Android/ExoPlayer only — browsers cannot open rtsp://; the deviceSocket strip
+// keeps an rtsp item off any screen that does not declare playback.rtsp).
+const LIVE_MIME = 'video/hls';      // kept as the canonical name; HLS is the portable transport
+const RTSP_MIME = 'video/rtsp';
+const LIVE_MIMES = [LIVE_MIME, RTSP_MIME];
 
 function isLiveItem(item) {
-  return !!(item && item.mime_type === LIVE_MIME);
+  return !!(item && LIVE_MIMES.indexOf(item.mime_type) !== -1);
 }
 
 // Dwell lives on the PLAYLIST ITEM's duration_sec. 0 / null / absent = infinite
@@ -65,7 +69,7 @@ function validateRemoteUrl(url) {
   return null;
 }
 
-// Gate for a URL only the player opens. http/https only (no file:/javascript:/
+// Gate for an HLS URL only the player opens. http/https only (no file:/javascript:/
 // ftp:/udp:/rtsp:), private hosts ALLOWED, credentials-in-URL rejected (they would
 // travel in the published snapshot to every screen). Returns null if valid, else
 // { status, error }.
@@ -82,7 +86,40 @@ function validatePlayerOpenedUrl(url) {
   return null;
 }
 
+function looksLikeRtspUrl(url) {
+  return typeof url === 'string' && /^rtsp:\/\//i.test(url.trim());
+}
+
+// Gate for an RTSP URL only the player opens (Android/ExoPlayer). rtsp:// only. Unlike HLS,
+// credentials in the URL are ALLOWED here: rtsp://user:pass@cam is the near-universal way IP
+// cameras are addressed, and the server never fetches it — the screen opens it on its own LAN.
+function validateRtspUrl(url) {
+  let parsed;
+  try { parsed = new URL(url); }
+  catch { return { status: 400, error: 'Invalid URL format' }; }
+  if (parsed.protocol !== 'rtsp:') {
+    return { status: 400, error: 'A camera stream URL must use rtsp://' };
+  }
+  return null;
+}
+
+// Classify a "live stream" URL the operator typed into one Add flow: rtsp:// -> video/rtsp,
+// an http(s) .m3u8 -> video/hls. Returns { mime } or { error: { status, error } }.
+function classifyLiveUrl(url) {
+  if (looksLikeRtspUrl(url)) {
+    const e = validateRtspUrl(url);
+    return e ? { error: e } : { mime: RTSP_MIME };
+  }
+  const e = validatePlayerOpenedUrl(url);
+  if (e) return { error: e };
+  if (!looksLikeHlsUrl(url)) {
+    return { error: { status: 400, error: 'That does not look like a live stream. Use an .m3u8 (HLS) URL, or an rtsp:// camera URL.' } };
+  }
+  return { mime: LIVE_MIME };
+}
+
 module.exports = {
-  LIVE_MIME, isLiveItem, isInfiniteDwell, looksLikeHlsUrl,
-  validateRemoteUrl, validatePlayerOpenedUrl,
+  LIVE_MIME, RTSP_MIME, LIVE_MIMES, isLiveItem, isInfiniteDwell,
+  looksLikeHlsUrl, looksLikeRtspUrl,
+  validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, classifyLiveUrl,
 };

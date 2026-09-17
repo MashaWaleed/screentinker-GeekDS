@@ -501,16 +501,25 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       WHERE d.id = ?`).get(deviceId);
 
   /*
-   * P2 (additive): a live HLS item must never reach a device that cannot decode it. A v1.9.28
-   * player would hang on a black <video src=…m3u8>, and e-ink cannot render a stream at all —
-   * neither declares playback.hls, and it is in no baseline, so supports() is false for them and
-   * true only for a player that declared it. Legacy NULL capabilities fall to the baseline, which
-   * also lacks it, so they are stripped too. Drop live assignments BEFORE they are sent. (The
-   * device-free dashboard preview keeps them — assemblePayload is unchanged.)
+   * P2 (additive): a live item must never reach a device that cannot decode it. HLS (video/hls) is
+   * gated on playback.hls (a v1.9.28 player would hang on a black <video src=…m3u8>, e-ink cannot
+   * render a stream); RTSP (video/rtsp) is gated on playback.rtsp, which ONLY the native Android
+   * player declares (browsers/BrightSign/Tizen/e-ink cannot open rtsp://). Both are in no baseline,
+   * so supports() is false for a legacy/undeclared device and true only for a player that declared
+   * it. Drop unsupported live assignments BEFORE they are sent. (The device-free dashboard preview
+   * keeps them — assemblePayload is unchanged.)
    */
   const deviceSupportsHls = capsLib.supports(device, 'playback.hls');
-  const dropLiveIfUnsupported = (items) =>
-    (deviceSupportsHls || !Array.isArray(items)) ? items : items.filter((a) => !(a && a.mime_type === 'video/hls'));
+  const deviceSupportsRtsp = capsLib.supports(device, 'playback.rtsp');
+  const dropLiveIfUnsupported = (items) => {
+    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp)) return items;
+    return items.filter((a) => {
+      if (!a) return true;
+      if (a.mime_type === 'video/hls') return deviceSupportsHls;
+      if (a.mime_type === 'video/rtsp') return deviceSupportsRtsp;
+      return true;
+    });
+  };
 
   let assignments = [];
   let playback_order = 'sequential';

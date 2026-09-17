@@ -561,8 +561,8 @@ export default {
     'content.youtube_add_btn': 'YouTube-video toevoegen',
     // IPTV / live HLS-stream
     'content.hls': 'Livestream',
-    'content.hls_desc': 'HLS (.m3u8). Het scherm opent deze URL zelf, dus het mag een LAN-adres zijn. ScreenTinker haalt de video nooit zelf op.',
-    'content.hls_url_placeholder': 'https://... of http://10.0.0.5/live.m3u8',
+    'content.hls_desc': 'HLS (.m3u8), of een rtsp://-camera op Android-spelers. Het scherm opent de URL zelf, dus het mag een LAN-adres zijn. ScreenTinker haalt de video nooit zelf op.',
+    'content.hls_url_placeholder': 'https://...m3u8  of  rtsp://user:pass@10.0.0.5/stream',
     'content.hls_name_placeholder': 'Kanaalnaam (optioneel)',
     'content.hls_add_btn': 'Livestream toevoegen',
     // Search / folders

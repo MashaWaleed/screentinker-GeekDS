@@ -124,6 +124,7 @@ dependencies {
     // module is on the classpath — without it ExoPlayer rejects the stream. This is what backs the
     // playback.hls capability.
     implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.2.1")   // native RTSP camera/stream playback
 
     // Socket.IO client.
     //

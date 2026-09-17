@@ -35,6 +35,11 @@ const CAPABILITIES = [
    * to decode HLS — web/BrightSign/webOS, Android via ExoPlayer, Tizen natively — declares it
    * for itself. E-ink never declares it. */
   'playback.hls',
+  /* A live RTSP camera/stream (mime video/rtsp) opened by the player. Android/ExoPlayer ONLY —
+   * browsers, BrightSign/webOS, Tizen and e-ink cannot open rtsp://, so only the native Android
+   * player declares it and the deviceSocket strip keeps rtsp items off every other screen. In no
+   * baseline (brand new). */
+  'playback.rtsp',
   /* An uploaded HTML bundle (.wgt / .zip) played as a playlist item. Declared by a player that can
    * MOUNT one — today that means loading the server's flattened single-document render, which every
    * player with an iframe can do. It does NOT imply the player can unpack an archive locally, so it
