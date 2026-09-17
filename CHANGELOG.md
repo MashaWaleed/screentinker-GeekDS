@@ -55,6 +55,7 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: a read-only member could reach live screens (slide decks + agency tokens).** Two authorization gaps let a `workspace_viewer` perform writes the role is meant to forbid. Slide decks had no read-only gate: a viewer could create, edit, PUBLISH (which builds slide widgets and a playlist and pushes a playlist-update to every screen) and delete decks. And `POST /api/tokens` gated only on workspace membership, so a viewer could mint an `agency` token with auto-publish and push content to live signage through the agency surface, which does not re-check the owner's role. A viewer is now denied deck writes/publish/delete (matching playlists and schedules) and may mint only a read-scoped token.
 **Security: a non-string widget config value could bypass HTML escaping.** `escapeHtml` returned a
 non-string argument unchanged, so a widget `config` field set to a JSON array/object (weather
 `location`, social `platform`/`query`, rss `feed_url`) reached the render output unescaped and was

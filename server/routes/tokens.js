@@ -81,6 +81,14 @@ router.post('/', (req, res) => {
   if (!accessContext(req.user.id, 'user', req.workspace)) {
     return res.status(400).json({ error: 'You must be a member of this workspace to create a token here' });
   }
+  // A read-only member may mint only a READ-scoped token. write/full let the token write in the
+  // workspace, and an `agency` token can PUBLISH to live screens (auto_publish) through the agency
+  // surface, which never re-checks the owner's workspace role at use time — so a workspace_viewer
+  // minting `agency` was a read-only-to-publish escalation. Gate minting on the same "viewer is
+  // read-only" invariant the resource routes enforce. (billing:read is already platform-admin only.)
+  if (scope !== 'read' && !req.actingAs && req.workspaceRole === 'workspace_viewer') {
+    return res.status(403).json({ error: 'Read-only members can only create a read-scoped token' });
+  }
   // #73: an agency token is bound to a NON-EMPTY allowlist of playlists in THIS workspace.
   // Validate up front so a bad target never leaves an orphan token behind.
   let targetIds = [];
