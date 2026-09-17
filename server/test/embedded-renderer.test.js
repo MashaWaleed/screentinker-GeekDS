@@ -773,6 +773,8 @@ describe('remote web pages are navigated, not pasted', () => {
   const calls = { goto: [], setContent: [], fetch: [] };
   const fakePage = {
     setViewport: async () => {},
+    setRequestInterception: async () => {},   // SSRF hardening: renderRemotePage vets each request
+    on: () => {},
     goto: async (u) => { calls.goto.push(u); },
     setContent: async (h) => { calls.setContent.push(h); },
     waitForNetworkIdle: async () => {},
@@ -820,6 +822,21 @@ describe('remote web pages are navigated, not pasted', () => {
       () => render({ id: 'i3' }, { remote_url: 'http://169.254.169.254/latest/meta-data/', mime_type: 'image/jpeg' }, { width: 800, height: 480 }),
       (e) => e.code === 'BLOCKED_URL');
     assert.equal(calls.fetch.length, 0);
+  });
+});
+
+describe('SSRF: server-side remote_url fetches are guarded', () => {
+  test('every remote_url fetch goes through guardedRequest, and the page render vets each request', () => {
+    const src = fs.readFileSync(require.resolve('../lib/embedded-render'), 'utf8');
+    // No bare fetch() of an operator-supplied remote url anywhere (that path skips the pin + redirect
+    // re-vet that guardedRequest provides). renderRemoteImage and renderLayoutNative use guardedRequest.
+    assert.ok(!/\bfetch\(\s*content\.remote_url/.test(src), 'renderLayoutNative must not bare-fetch remote_url');
+    assert.ok(!/\bawait fetch\(\s*url\b/.test(src), 'renderRemoteImage must not bare-fetch the url');
+    assert.match(src, /guardedRequest\(url,/, 'renderRemoteImage uses guardedRequest');
+    assert.match(src, /guardedRequest\(content\.remote_url,/, 'renderLayoutNative uses guardedRequest');
+    // renderRemotePage (Chromium) vets every request the page makes, since page.goto is not pinned.
+    assert.match(src, /setRequestInterception\(true\)/, 'renderRemotePage intercepts requests');
+    assert.match(src, /assertSafeUrl\(r\.url\(\)\)/, 'and vets each request URL');
   });
 });
 

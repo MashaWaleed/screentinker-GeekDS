@@ -1013,6 +1013,15 @@ function renderSlideHtml(rawConfig, opts = {}) {
   video.bg { width:100%; height:100%; object-fit:cover; display:block; }
   .scrim { position:absolute; top:0; right:0; bottom:0; left:0; }
   .t { line-height:1.08; white-space:pre-wrap; word-break:break-word; }
+  /* A live element (clock/date/countdown) rewrites its own textContent every second. On some older
+     Android System WebViews / cheap GPU drivers, an in-place text update is composited OVER the
+     previous frame without clearing it, so the changing glyphs smear into a repeated ghost column
+     (a room-sign clock's minutes "repeating down the edge"). Pinning each live element onto its own
+     backing layer makes the compositor re-rasterise and clear it every frame. translateZ(0) is an
+     identity transform (nothing moves); it only forces the layer. Harmless on a healthy WebView.
+     NOTE: could not be reproduced on a modern WebView (150) in-house — this is a defensive fix for
+     old-WebView field panels; if a report persists, the real remedy is updating the panel's WebView. */
+  .live { transform:translateZ(0); backface-visibility:hidden; -webkit-backface-visibility:hidden; }
   .e img { width:100%; height:100%; object-fit:cover; display:block; }
   /* A cut-out must fit inside its box, not be cropped to fill it. See IMAGE_FITS. */
   .e img.fit { object-fit:contain; }

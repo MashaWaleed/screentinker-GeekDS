@@ -75,6 +75,21 @@ test('the emitted script is byte-identical to the constant', () => {
   assert.equal(liveScripts(html), 1, 'and carry it exactly once');
 });
 
+test('a live element is pinned to its own compositing layer (old-WebView repaint hardening)', () => {
+  /*
+   * A live element rewrites its textContent every second. On some old Android System WebViews the
+   * in-place update composites over the previous frame without clearing it, so the changing glyphs
+   * smear into a repeated ghost column (field report: a room-sign clock's minutes "repeating down
+   * the edge"). translateZ(0) forces the element onto its own backing layer the compositor
+   * re-rasterises each frame. The transform is an identity (nothing moves).
+   */
+  const html = render([{ kind: 'clock' }]);
+  const rule = html.match(/\.live \{[^}]*\}/);
+  assert.ok(rule, 'a .live CSS rule must be emitted');
+  assert.match(rule[0], /transform:\s*translateZ\(0\)/, 'live element promoted to its own layer');
+  assert.match(rule[0], /backface-visibility:\s*hidden/, 'and the layer clears cleanly');
+});
+
 test('⚠️ the script selector matches the class the renderer emits', () => {
   /*
    * These two live 200 lines apart and nothing but this test connects them. Rename one and every
