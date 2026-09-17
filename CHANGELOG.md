@@ -55,6 +55,14 @@ timetable. Old players ignore the field and keep showing their idle screen.
 
 ### Fixed
 
+**Security: a non-string widget config value could bypass HTML escaping.** `escapeHtml` returned a
+non-string argument unchanged, so a widget `config` field set to a JSON array/object (weather
+`location`, social `platform`/`query`, rss `feed_url`) reached the render output unescaped and was
+string-coerced there, which for the rss JS-string context meant arbitrary script in the widget
+document. Non-`slide` widget config is not normalized, so the array reached the sink intact. Fixed by
+coercing with `String()` before escaping, matching the slide renderer. These are the escaped
+built-in widgets whose only defense is this escaping.
+
 **Schedule and play-window edits now tell you they need a Publish.** Setting a play window on an item
 (`play_from` / `play_until`) saved silently, so it was easy to set a time frame, see nothing change on
 the screen, and conclude the timetable was broken when the edit was only a draft. It now shows the
