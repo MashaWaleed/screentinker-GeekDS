@@ -211,6 +211,14 @@ router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) 
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
     const folderId = req.body.folder_id || null;
+    // Validate the folder is in this workspace (PUT /:id and batch/move already do; upload did not,
+    // so an upload could be filed under another workspace's folder id).
+    if (folderId) {
+      const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
+      if (!target || target.workspace_id !== req.workspaceId) {
+        return res.status(400).json({ error: 'Invalid folder_id for this workspace' });
+      }
+    }
     const results = [];
     for (const file of files) {
       results.push(await ingestUploadedFile({ file, userId: req.user.id, workspaceId: req.workspaceId, folderId }));

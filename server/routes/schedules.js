@@ -399,6 +399,13 @@ router.put('/:id', requireScheduleWrite, (req, res) => {
     const err = checkRefInWorkspace(table, newVal, schedule.workspace_id, { allowNullWorkspace: allowNull });
     if (err) return res.status(err.status).json({ error: err.error });
   }
+  // zone_id is a polymorphic layout-zone reference, not in ownershipChecks. POST validates it via
+  // checkZoneInWorkspace; PUT did not, so a foreign zone_id (a zone on another workspace's layout)
+  // could be written. Same guard here.
+  if (req.body.zone_id !== undefined && req.body.zone_id && req.body.zone_id !== schedule.zone_id) {
+    const zErr = checkZoneInWorkspace(req.body.zone_id, schedule.workspace_id);
+    if (zErr) return res.status(zErr.status).json({ error: zErr.error });
+  }
 
   const fields = ['device_id', 'group_id', 'zone_id', 'content_id', 'widget_id', 'layout_id', 'playlist_id', 'title',
     'start_time', 'end_time', 'timezone', 'recurrence', 'recurrence_end', 'priority', 'enabled', 'color'];
