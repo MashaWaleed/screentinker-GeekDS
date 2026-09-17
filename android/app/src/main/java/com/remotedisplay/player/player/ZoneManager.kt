@@ -46,6 +46,9 @@ class ZoneManager(
     // Render context kept for rotation re-renders.
     private var renderServerUrl = ""
     private var renderDeviceId = "" // appended to widget render URLs so widgets can report per-device
+    // IPTV: a dwell-0 live stream in a rotating zone re-checks eligibility on this slow cadence
+    // (stays if it is still the active pick; advances if a daypart opened a sibling). Never a busy-loop.
+    private val LIVE_RECHECK_MS = 60_000L
     private var renderCache: com.remotedisplay.player.data.ContentCache? = null
 
     var currentLayoutId: String? = null
@@ -203,6 +206,7 @@ class ZoneManager(
         val advance: () -> Unit = { showZoneItem(zone, assignments, activeIdx + 1, params) }
 
         val mimeType = a.optString("mime_type", "")
+        val isLive = mimeType == "video/hls"   // a live HLS stream: bytes never end -> dwell, not STATE_ENDED
         val remoteUrl = if (a.isNull("remote_url")) null else a.optString("remote_url", null)
         val widgetType = if (a.isNull("widget_type")) null else a.optString("widget_type", null)
         val contentId = if (a.isNull("content_id")) null else a.optString("content_id", null)
@@ -266,18 +270,22 @@ class ZoneManager(
                     layoutParams = params
                 }
                 val exoPlayer = ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(src))
-                    repeatMode = if (multi) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ALL
+                    setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
+                    // A live stream never ends, so REPEAT is moot; a normal clip in a lone zone loops.
+                    repeatMode = if (multi && !isLive) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ALL
                     volume = if (isMuted) 0f else 1f
                     if (multi) addListener(object : Player.Listener {
                         override fun onPlaybackStateChanged(state: Int) {
-                            if (state == Player.STATE_ENDED) handler.post { advance() }
+                            // A live stream never reaches STATE_ENDED (it advances on its dwell timer
+                            // below); a normal clip advances when it finishes.
+                            if (!isLive && state == Player.STATE_ENDED) handler.post { advance() }
                         }
                         // Same reason MediaPlayerManager treats a playback error as a completion
                         // ("Root-2: a corrupt/undecodable video used to freeze the playlist
                         // forever"): an error lands in STATE_IDLE, never STATE_ENDED, so without
                         // this the zone stops rotating and goes black until the layout changes or
-                        // the app restarts — while every other zone keeps going.
+                        // the app restarts — while every other zone keeps going. Covers a dead
+                        // stream URL too, so a live zone skips instead of sitting black.
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                             handler.post { advance() }
                         }
@@ -287,6 +295,24 @@ class ZoneManager(
                 }
                 playerView.player = exoPlayer
                 container.addView(playerView); zoneViews[zone.id] = playerView; zoneExoPlayers[zone.id] = exoPlayer
+                // DWELL for a live stream in a rotating zone: it never fires STATE_ENDED, so advance on
+                // the dwell timer (duration_sec > 0). A dwell-0 stream stays until it is no longer the
+                // active pick (windows still re-evaluate on the slow cadence, without remounting).
+                if (multi && isLive) {
+                    val liveDwell = a.optInt("duration_sec", 0)
+                    if (liveDwell > 0) {
+                        scheduleZoneAdvance(zone.id, liveDwell * 1000L, advance)
+                    } else {
+                        val recheck = object : Runnable {
+                            override fun run() {
+                                if (zoneNextActive(assignments, activeIdx) == activeIdx) handler.postDelayed(this, LIVE_RECHECK_MS)
+                                else advance()
+                            }
+                        }
+                        zoneRotators[zone.id] = recheck
+                        handler.postDelayed(recheck, LIVE_RECHECK_MS)
+                    }
+                }
             }
             // Image
             mimeType.startsWith("image/") -> {

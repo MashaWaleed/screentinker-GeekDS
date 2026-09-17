@@ -121,6 +121,17 @@ test('every player switches on video/hls (web, legacy, Tizen, Android)', () => {
   assert.match(readF('android/app/src/main/java/com/remotedisplay/player/player/PlaylistController.kt'), /video\/hls/, 'Android references video/hls');
 });
 
+test('live streams are first-class in multi-zone layouts too (web zone + Android ZoneManager)', () => {
+  const web = readF('server/player/index.html');
+  // The zone renderer routes video/hls through the shared native+hls.js attach, not a bare <video>.
+  assert.match(web, /const isHls = a\.mime_type === LIVE_MIME/, 'showZoneItem classifies a live item');
+  assert.match(web, /attachHlsTo\(/, 'and attaches it via the hls.js-capable helper');
+  const zm = readF('android/app/src/main/java/com/remotedisplay/player/player/ZoneManager.kt');
+  assert.match(zm, /val isLive = mimeType == "video\/hls"/, 'ZoneManager recognises a live stream');
+  assert.match(zm, /!isLive && state == Player\.STATE_ENDED/, 'a live zone item does not wait for STATE_ENDED');
+  assert.match(zm, /liveDwell/, 'and advances on its dwell instead');
+});
+
 test('every HLS-capable player DECLARES playback.hls; e-ink and no baseline do not', () => {
   assert.match(readF('server/player/index.html'), /'playback\.hls'/, 'web player declares it');
   assert.match(readF('tizen/js/capabilities.js'), /'playback\.hls'/, 'Tizen declares it');

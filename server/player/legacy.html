@@ -1137,7 +1137,6 @@ function groupReport(level, msg) {
 }
 let lastWallSync = null;
 let currentVideoEl = null;
-let currentHls = null;
 let currentItemStartedAt = 0;
 let renderSeq = 0;
 let pendingVideoSeq = -1;
@@ -4185,17 +4184,11 @@ function teardownCurrentMedia(keep) {
     pendingWidgetSwap = null;
   }
   clearZoneTimers();
-  if (currentHls) {
-    try {
-      currentHls.destroy();
-    } catch (e) {
-    }
-    currentHls = null;
-  }
   const container = document.getElementById("playerContainer");
   if (container) {
     container.querySelectorAll("video").forEach((v) => {
       try {
+        destroyHls(v);
         v.onended = null;
         v.onerror = null;
         v.onloadeddata = null;
@@ -4220,6 +4213,7 @@ function teardownCurrentMedia(keep) {
   }
   if (currentVideoEl) {
     try {
+      destroyHls(currentVideoEl);
       currentVideoEl.onended = null;
       currentVideoEl.onerror = null;
       currentVideoEl.onloadeddata = null;
@@ -4603,19 +4597,21 @@ function renderLiveStream(item, src, mount, opts) {
   video.style.cssText = wallConfig ? "width:100%;height:100%;object-fit:fill;background:#000" : "width:100%;height:100%;object-fit:contain;background:transparent";
   mount.appendChild(video);
   currentVideoEl = video;
-  attachHls(video, src, item, { mayAdvance: o.mayAdvance !== false });
+  const seq = renderSeq;
+  attachHlsTo(video, src, {
+    stale: () => renderSeq !== seq || video !== currentVideoEl,
+    onFatal: () => mediaFailureSkip(video, "hls", src, o.mayAdvance !== false)
+  });
   if (o.mayAdvance !== false) armLiveDwell(item);
 }
-function attachHls(video, src, item, o) {
-  o = o || {};
-  const mayAdvance = o.mayAdvance !== false;
-  const seq = renderSeq;
-  const superseded = () => renderSeq !== seq || video !== currentVideoEl;
+function attachHlsTo(video, src, opts) {
+  const o = opts || {};
+  const stale = typeof o.stale === "function" ? o.stale : () => false;
   let settled = false;
-  const skip = () => {
+  const fail = () => {
     if (settled) return;
     settled = true;
-    mediaFailureSkip(video, "hls", src, mayAdvance);
+    if (o.onFatal) o.onFatal();
   };
   const play = () => video.play().catch(() => {
     video.muted = true;
@@ -4623,42 +4619,42 @@ function attachHls(video, src, item, o) {
     });
   });
   const useHlsJs = () => {
-    if (superseded()) return;
+    if (stale()) return;
     loadHlsLib((Hls) => {
-      if (superseded()) return;
+      if (stale()) return;
       if (!Hls || !Hls.isSupported()) {
-        skip();
+        fail();
         return;
       }
       try {
         const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
-        currentHls = hls;
+        video._stHls = hls;
         hls.on(Hls.Events.ERROR, (evt, data) => {
-          if (data && data.fatal) skip();
+          if (data && data.fatal) fail();
         });
         hls.loadSource(src);
         hls.attachMedia(video);
         play();
       } catch (e) {
-        skip();
+        fail();
       }
-    }, skip);
+    }, fail);
   };
   const stall = setTimeout(() => {
-    if (settled || superseded() || currentHls) return;
+    if (settled || stale() || video._stHls) return;
     if (video.readyState < 2) {
       video.onerror = null;
       useHlsJs();
     }
   }, 6e3);
   video.onerror = () => {
-    if (settled || superseded()) return;
+    if (settled || stale()) return;
     clearTimeout(stall);
     const code = video.error && video.error.code;
-    if (!currentHls && (code === 4 || code === 3 || code === void 0)) {
+    if (!video._stHls && (code === 4 || code === 3 || code === void 0)) {
       video.onerror = null;
       useHlsJs();
-    } else skip();
+    } else fail();
   };
   try {
     video.src = src;
@@ -4666,6 +4662,15 @@ function attachHls(video, src, item, o) {
   } catch (e) {
     clearTimeout(stall);
     useHlsJs();
+  }
+}
+function destroyHls(video) {
+  if (video && video._stHls) {
+    try {
+      video._stHls.destroy();
+    } catch (e) {
+    }
+    video._stHls = null;
   }
 }
 function loadHlsLib(onReady, onFail) {
@@ -5050,6 +5055,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   const advance = () => showZoneItem(zone, div, items, index + 1, timers);
   div.querySelectorAll("video").forEach((v) => {
     try {
+      destroyHls(v);
       v.onended = null;
       v.pause();
       v.removeAttribute("src");
@@ -5059,7 +5065,8 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   });
   div.innerHTML = "";
   const isYoutube = a.mime_type === "video/youtube";
-  const isVideo = !isYoutube && ((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/"));
+  const isHls = a.mime_type === LIVE_MIME;
+  const isVideo = !isYoutube && !isHls && ((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/"));
   const src = mediaUrl(a);
   const dur = (a.duration_sec || 10) * 1e3;
   if (a.widget_id) {
@@ -5072,6 +5079,33 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   } else if (isYoutube) {
     createYoutubeEmbed(src, a, div);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
+  } else if (isHls) {
+    const video = document.createElement("video");
+    video.autoplay = true;
+    video.__stOverlay = !!div.__stOverlay;
+    video.muted = div.__stOverlay ? false : zone.sort_order > 0;
+    video.playsInline = true;
+    video.loop = false;
+    video.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));
+    div.appendChild(video);
+    attachHlsTo(video, src, { onFatal: () => {
+      if (multi) {
+        if (timers[zone.id]) clearTimeout(timers[zone.id]);
+        timers[zone.id] = setTimeout(advance, 3e3);
+      }
+    } });
+    if (multi) {
+      const dwell = Number(a.duration_sec) || 0;
+      if (dwell > 0) {
+        timers[zone.id] = setTimeout(advance, dwell * 1e3);
+      } else {
+        const recheck = () => {
+          if (zoneNextActive(items, index, zone.id) === index) timers[zone.id] = setTimeout(recheck, LIVE_DWELL_RECHECK_MS);
+          else advance();
+        };
+        timers[zone.id] = setTimeout(recheck, LIVE_DWELL_RECHECK_MS);
+      }
+    }
   } else if (isVideo) {
     const video = document.createElement("video");
     video.src = src;
