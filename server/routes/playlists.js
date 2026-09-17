@@ -853,6 +853,10 @@ function validateBlocks(blocks) {
     if (!Array.isArray(b.days) || b.days.length === 0 || !b.days.every(d => Number.isInteger(d) && d >= 0 && d <= 6)) return 'days must be a non-empty array of integers 0-6';
     if (!TIME_RE.test(b.start)) return 'start must be HH:MM (00:00-23:59)';
     if (!(TIME_RE.test(b.end) || b.end === '24:00')) return 'end must be HH:MM or 24:00';
+    // A zero-length window (start == end) evaluates as NEVER active — the item silently disappears
+    // rather than showing in the intended window. Reject it. (start > end is a valid OVERNIGHT window
+    // and is allowed; use end=24:00 for "until midnight".)
+    if (b.start === b.end) return 'start and end must differ (a zero-length window never plays; for an overnight window make end earlier than start)';
     for (const k of ['start_date', 'end_date']) if (b[k] != null && !DATE_RE.test(b[k])) return `${k} must be YYYY-MM-DD or null`;
   }
   return null;

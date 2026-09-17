@@ -48,6 +48,8 @@ function validateScheduleBlocks(blocks) {
     if (!b.days || !b.days.length) return t('itemsched.err.days');
     if (!SCHED_TIME_RE.test(b.start)) return t('itemsched.err.start');
     if (!(SCHED_TIME_RE.test(b.end) || b.end === '24:00')) return t('itemsched.err.end');
+    // A zero-length window (start == end) never plays; reject it (start > end is a valid overnight window).
+    if (b.start === b.end) return t('itemsched.err.same');
     if (b.start_date && !SCHED_DATE_RE.test(b.start_date)) return t('itemsched.err.start_date');
     if (b.end_date && !SCHED_DATE_RE.test(b.end_date)) return t('itemsched.err.end_date');
   }
@@ -440,7 +442,7 @@ function renderDetailContent(container, playlist) {
 
   container.innerHTML = `
     ${isDraft ? `
-    <div id="draftBanner" style="background:#78350f;border:1px solid #92400e;border-radius:var(--radius-lg);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+    <div id="draftBanner" style="position:sticky;top:0;z-index:50;background:#78350f;border:1px solid #92400e;border-radius:var(--radius-lg);padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 6px 16px rgba(0,0,0,0.4)">
       <div style="display:flex;align-items:center;gap:10px;color:#fbbf24">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <div>
@@ -1163,6 +1165,9 @@ function renderItems(items) {
     const val = el.value || null;
     try {
       await api.updatePlaylistItem(currentPlaylistId, itemId, { [field]: val });
+      // Was silent, which is how a "set a time frame but it still plays" report happens: the change
+      // is a DRAFT and does nothing on screens until Publish. Say so, like the schedule modal does.
+      showToast(t('playlist.toast.window_saved'), 'info');
       refreshAfterMutation();
     } catch (err) {
       showToast(err.message, 'error');
@@ -1727,7 +1732,11 @@ function showScheduleModal(item, opts = {}) {
         <p style="font-size:12px;color:#7dd3fc;background:#0c2a3f;border-radius:6px;padding:8px 10px;margin:0 0 16px">${t('itemsched.hint')}</p>
         <div>${blocks.length ? blocks.map(blockRow).join('') : `<p style="font-size:13px;color:var(--text-muted);margin:0 0 10px">${t('itemsched.none')}</p>`}</div>
         <button class="btn btn-secondary btn-sm" id="schedAddBlock" style="margin-bottom:4px">${t('itemsched.add_block')}</button>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#fbbf24;background:#78350f;border:1px solid #92400e;border-radius:6px;padding:9px 11px;margin-top:16px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>${t('itemsched.publish_note')}</span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
           <button class="btn btn-secondary" id="schedCancel">${t('itemsched.cancel')}</button>
           <button class="btn" id="schedSave" style="background:#f59e0b;color:#000;font-weight:600;border:none">${t('itemsched.save')}</button>
         </div>

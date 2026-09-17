@@ -440,6 +440,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     // #74/#75: restore the cached effective timezone too (offline schedules)
                     playlistController.setTimezone(if (cached.isNull("timezone")) null else cached.optString("timezone", "").ifEmpty { null })
+                    // Standby content survives an offline cold-start too: the cached payload is the whole
+                    // server message, so default_content rides along and the off-hours standby shows even
+                    // with no WAN (a LOCAL default is pinned on disk by the download loop; a remote one
+                    // can't stream offline and simply won't show).
+                    playlistController.setDefaultContent(if (cached.isNull("default_content")) null else cached.optJSONObject("default_content"))
                     playlistController.updatePlaylist(assignments, cached.optString("playback_order", "sequential"))
                     playlistController.startIfNeeded()
                     // #group-sync: if this device was in a sync group, resume the schedule immediately
@@ -804,6 +809,13 @@ class MainActivity : AppCompatActivity() {
             playlistController.setTimezone(effectiveTz)
             zoneManager?.setTimezone(effectiveTz)
 
+            // Default / standby content: a per-device, per-payload fallback IMAGE the server attaches
+            // TOP-LEVEL (not in assignments) as `default_content`. Handed to the controller so it can
+            // render it in the defined idle states (empty playlist / everything dayparted off) instead
+            // of the idle text. Null/absent when unset. Set here so BOTH the wall and single-zone
+            // updatePlaylist paths below have it before they run.
+            playlistController.setDefaultContent(if (data.isNull("default_content")) null else data.optJSONObject("default_content"))
+
             /*
              * Cache playlist JSON for offline cold-start.
              *
@@ -984,6 +996,22 @@ class MainActivity : AppCompatActivity() {
                         bundleCache.fetch(config.serverUrl, contentId, contentRev)
                     }
                 }
+
+                // OFFLINE STANDBY: a LOCAL default image (filepath, no remote_url) must be pinned into
+                // the content cache alongside the playlist, so it can render during off-hours when the
+                // WAN is down — the exact scenario default_content exists for. Same single-flight
+                // download path as an assignment. A remote_url default streams and can't be cached
+                // (it just won't show offline); a widget/no-id default has nothing to fetch.
+                try {
+                    val dc = if (data.isNull("default_content")) null else data.optJSONObject("default_content")
+                    if (dc != null) {
+                        val dcId = if (dc.isNull("content_id")) "" else dc.optString("content_id", "")
+                        val dcRemote = if (dc.isNull("remote_url")) null else dc.optString("remote_url", null)
+                        if (dcId.isNotEmpty() && dcRemote.isNullOrEmpty()) {
+                            downloadCoordinator.ensure(dcId, dc.optString("filename", "default"), dc.optLong("content_rev", 0L))
+                        }
+                    }
+                } catch (e: Exception) { /* standby pin is best-effort */ }
 
                 // Reclaim renders for bundles that have left the playlist. The media cache has no
                 // eviction at all, but this store is small and bounded by the playlist, so keeping

@@ -260,7 +260,21 @@ PlaylistPlayer.prototype.clearStage = function () {
   this.stage.innerHTML = '';
 };
 
+// default/standby content: if the device carries a fallback IMAGE (set by app.js from the payload's
+// top-level default_content), render it in place of an idle card. Returns true when it took the stage.
+// It is NOT in the items list, so renderImage's staleness gate keys on defaultContent instead of the
+// item index (see renderImage). single=true -> no advance timer is armed; the image just stays until
+// the next payload (idle) or the next daypart re-check (nothingScheduled) supersedes it.
+PlaylistPlayer.prototype.showDefaultContent = function () {
+  var dc = this.defaultContent;
+  if (!dc || (dc.mime_type || '').indexOf('image/') !== 0) return false;
+  this._releasePreloadImage();   // never mount a warmed NEXT-item image as the default
+  this.renderImage(dc, true);
+  return true;
+};
+
 PlaylistPlayer.prototype.idle = function () {
+  if (this.showDefaultContent()) return;   // no playlist / empty playlist -> fallback image if set
   this.clearStage();
   this.stage.innerHTML =
     '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
@@ -414,12 +428,17 @@ PlaylistPlayer.prototype.startPlayback = function () {
 // Every item filtered out: idle and re-check shortly (a daypart may open).
 PlaylistPlayer.prototype.nothingScheduled = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  var self = this;
+  // Keep re-checking regardless of what we paint: a daypart may open, and startPlayback then swaps the
+  // scheduled item back in over the fallback image.
+  this.timer = setTimeout(function () { self.startPlayback(); }, 30000);
+  // A playlist exists but every item is filtered out by its schedule -> show the fallback image if the
+  // device has one, else the "nothing scheduled" card (renderImage owns the decode-gated swap).
+  if (this.showDefaultContent()) return;
   this.clearStage();
   this.stage.innerHTML =
     '<div class="card" style="position:relative"><h1>ScreenTinker</h1>' +
     '<p class="sub">' + tzt('nothing_scheduled') + '</p></div>';
-  var self = this;
-  this.timer = setTimeout(function () { self.startPlayback(); }, 30000);
 };
 
 // Proof-of-play: build + forward a device:play-event payload via the onPlayEvent hook (set by app.js).
@@ -613,7 +632,12 @@ PlaylistPlayer.prototype.renderImage = function (item, single) {
     img.src = this.contentUrl(item);
   }
   var settled = false;
+  // default/standby content is rendered from renderImage too, but it is NOT in the items list, so the
+  // index-based staleness check below would always read it as stale and blank. For it, "stale" means
+  // only that a newer payload replaced the fallback mid-decode.
+  var isDefault = (item === self.defaultContent);
   var stale = function () {
+    if (isDefault) return item !== self.defaultContent;
     // A next()/gotoIndex/playlist change mid-decode must not mount a now-stale image over the current
     // item (mirrors how renderVideo's _takePreload only fires for the still-current index).
     return self.index !== targetIdx || self.items[targetIdx] !== item;

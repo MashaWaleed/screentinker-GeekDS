@@ -933,6 +933,12 @@
     if (elPairing.classList.contains('hidden') === false) show(elStage);
     else if (elStage.classList.contains('hidden')) show(elStage);
 
+    // default/standby content: the server resolves the device's fallback image and sends it top-level
+    // (null/absent when unset). Stash it on the player so the idle sinks (idle/nothingScheduled) can show
+    // it INSTEAD of the "nothing scheduled" card. It is NOT a playlist item — it never enters assignments
+    // or the sig, so it can't restart playback.
+    player.defaultContent = payload.default_content || null;
+
     if (payload.wall_config) {
       // Video wall: fullscreen content mapped into this screen's slice. No multi-zone,
       // and no orientation transform — the wall geometry owns the stage. Wall renders via

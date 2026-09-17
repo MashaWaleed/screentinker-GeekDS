@@ -29,7 +29,8 @@ db.exec(`
     pairing_code TEXT, claim_secret TEXT, status TEXT,
     device_token TEXT, blocked INTEGER DEFAULT 0, screen_profile TEXT,
     playlist_id TEXT, playlist_source TEXT, layout_id TEXT,
-    timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000'
+    timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
+    default_content_id TEXT
   );
   CREATE TABLE playlists (
     id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, status TEXT DEFAULT 'published',
@@ -495,6 +496,25 @@ describe('Embedded Edge Cases & Robustness', () => {
 
     const res = resolveCurrentItem('dev-draft-1');
     assert.equal(res, null, 'draft/unpublished playlist must never be served to embedded devices');
+  });
+
+  test('resolveCurrentItem falls back to the device default image when there is no playlist', () => {
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filename, is_active) VALUES ('c-def-img', 'ws-1', 'image', 'image/png', 'off.png', 1)").run();
+    // no playlist_id at all -> previously black/404; now the configured default image shows
+    db.prepare("INSERT INTO devices (id, name, workspace_id, default_content_id) VALUES ('dev-def-1', 'Default Dev', 'ws-1', 'c-def-img')").run();
+
+    const res = resolveCurrentItem('dev-def-1');
+    assert.ok(res, 'a device with a default image must resolve something instead of null');
+    assert.equal(res.item.content_id, 'c-def-img', 'the resolved item is the configured default');
+    assert.equal(res.total, 1, 'default fallback is a single-item rotation');
+  });
+
+  test('resolveCurrentItem ignores a non-image default (e-ink renders images only)', () => {
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filename, is_active) VALUES ('c-def-vid', 'ws-1', 'video', 'video/mp4', 'clip.mp4', 1)").run();
+    db.prepare("INSERT INTO devices (id, name, workspace_id, default_content_id) VALUES ('dev-def-vid', 'Vid Default Dev', 'ws-1', 'c-def-vid')").run();
+
+    const res = resolveCurrentItem('dev-def-vid');
+    assert.equal(res, null, 'a video default cannot render on an e-ink panel -> null, not a broken item');
   });
 
   test('resolveLayoutItems returns null for empty or unpublished playlist (yields 404, not black 200)', () => {
