@@ -498,6 +498,24 @@ describe('Embedded Edge Cases & Robustness', () => {
     assert.equal(res, null, 'draft/unpublished playlist must never be served to embedded devices');
   });
 
+  test('resolveCurrentItem advance:false does not move the panel cursor (/info + preview)', () => {
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, is_active) VALUES ('c-adv-a','ws-1','image','image/png',1)").run();
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, is_active) VALUES ('c-adv-b','ws-1','image','image/png',1)").run();
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status, published_playback_order) VALUES ('pl-adv','ws-1','Adv','published','sequential')").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-adv-1','pl-adv','c-adv-a',0,30)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-adv-2','pl-adv','c-adv-b',1,30)").run();
+    publishPlaylist('pl-adv');   // resolveCurrentItem reads the published snapshot, not raw items
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id) VALUES ('dev-adv','Adv Dev','ws-1','pl-adv')").run();
+    // cursor at item 0, started at epoch 1 so the 30s dwell has elapsed -> a normal resolve advances.
+    db.prepare("INSERT INTO embedded_cursor (device_id, item_index, started_at) VALUES ('dev-adv', 0, 1)").run();
+    const idx = () => db.prepare("SELECT item_index FROM embedded_cursor WHERE device_id='dev-adv'").get().item_index;
+
+    resolveCurrentItem('dev-adv', undefined, { advance: false });
+    assert.equal(idx(), 0, 'a read-only resolve (advance:false) must not move the cursor');
+    resolveCurrentItem('dev-adv', undefined);            // a real device render advances, time-gated
+    assert.equal(idx(), 1, 'a real render advances the cursor');
+  });
+
   test('resolveCurrentItem falls back to the device default image when there is no playlist', () => {
     db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filename, is_active) VALUES ('c-def-img', 'ws-1', 'image', 'image/png', 'off.png', 1)").run();
     // no playlist_id at all -> previously black/404; now the configured default image shows

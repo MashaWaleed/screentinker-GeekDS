@@ -12,7 +12,7 @@ const { checkStorageLimit, checkRemoteUrl } = require('../middleware/subscriptio
 const { cleanUserText } = require('../middleware/sanitize');
 const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 // Phase 2.2b: workspace-aware access. Mirrors the pattern from devices.js.
-const { accessContext } = require('../lib/tenancy');
+const { accessContext, denyReadOnly } = require('../lib/tenancy');
 // #73: the upload ingest (processing + insert) is now shared with the agency router.
 const { ingestUploadedFile, deriveMediaMetadata } = require('../lib/content-ingest');
 const htmlBundle = require('../lib/html-bundle');
@@ -205,11 +205,20 @@ function uploadContentFilesGuarded(req, res, next) {
 router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before uploading.' });
+    if (denyReadOnly(req, res)) return;
     const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
     if (files.length === 0) return res.status(400).json({ error: 'No file uploaded' });
 
     // #73: shared ingest - identical processing + insert for dashboard and agency uploads.
     const folderId = req.body.folder_id || null;
+    // Validate the folder is in this workspace (PUT /:id and batch/move already do; upload did not,
+    // so an upload could be filed under another workspace's folder id).
+    if (folderId) {
+      const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(folderId);
+      if (!target || target.workspace_id !== req.workspaceId) {
+        return res.status(400).json({ error: 'Invalid folder_id for this workspace' });
+      }
+    }
     const results = [];
     for (const file of files) {
       results.push(await ingestUploadedFile({ file, userId: req.user.id, workspaceId: req.workspaceId, folderId }));
@@ -229,6 +238,7 @@ router.post('/', checkStorageLimit, uploadContentFilesGuarded, async (req, res) 
 router.post('/remote', checkRemoteUrl, (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding remote content.' });
+    if (denyReadOnly(req, res)) return;
     const { url, name, mime_type } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
     const urlErr = validateRemoteUrl(url);
@@ -256,6 +266,7 @@ router.post('/remote', checkRemoteUrl, (req, res) => {
 router.post('/youtube', async (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding YouTube content.' });
+    if (denyReadOnly(req, res)) return;
     const { url, name } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -314,6 +325,7 @@ router.post('/youtube', async (req, res) => {
 router.post('/hls', (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding a live stream.' });
+    if (denyReadOnly(req, res)) return;
     const { url, name } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
     const kind = classifyLiveUrl(url);

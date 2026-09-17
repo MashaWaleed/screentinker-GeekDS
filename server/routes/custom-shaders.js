@@ -19,6 +19,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const path = require('path');
 const { db } = require('../db/database');
+const { denyReadOnly } = require('../lib/tenancy');
 const { parseParams } = require(path.join(__dirname, '../../shared/Transitions/params.js'));
 const { MANIFEST } = require('../lib/transition-config');
 
@@ -87,6 +88,7 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context.' });
+  if (denyReadOnly(req, res)) return;
   const { source, name, licence_note } = req.body || {};
 
   const problem = validate(source);
@@ -131,6 +133,7 @@ router.delete('/:id', (req, res) => {
   const row = db.prepare('SELECT id, workspace_id FROM custom_shaders WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   if (row.workspace_id !== req.workspaceId) return res.status(403).json({ error: 'Not your transition' });
+  if (denyReadOnly(req, res)) return;   // scoped by workspace but not by role — a read-only member cannot delete
   db.prepare('DELETE FROM custom_shaders WHERE id = ?').run(row.id);
   // Widgets still naming it resolve to nothing, and the player hard-cuts. That is the same
   // behaviour a removed built-in already has, so no cleanup sweep is needed.

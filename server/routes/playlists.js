@@ -456,10 +456,18 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
 
   // ⚠️ Structure is captured PRE-expansion so "discard" can restore the nesting the flat snapshot
   // cannot describe. Device-facing data stays in published_snapshot; this is never sent anywhere.
-  const structure = JSON.stringify(db.prepare(`
-    SELECT content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight
+  const structureRows = db.prepare(`
+    SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight
       FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC
-  `).all(playlistId));
+  `).all(playlistId);
+  // ⚠️ Per-item schedule blocks (dayparting/validity) must be captured too, or a discard rebuilds
+  // the items WITHOUT them and silently strips the schedules from every item. `id` is used only to
+  // fetch the blocks and is dropped from the stored structure.
+  const structure = JSON.stringify(structureRows.map((row) => {
+    const blocks = schedulesForItem(row.id);
+    const { id, ...rest } = row;
+    return blocks.length ? { ...rest, schedules: blocks } : rest;
+  }));
 
   if (prev && prev.status === 'published' && prev.published_snapshot === next && (prev.published_playback_order || 'sequential') === order) {
     /*
@@ -740,12 +748,20 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
     // muted rides along too: #129's per-item mute was dropped by the old restore, so discarding an
     // unrelated draft edit silently un-muted every item that had been muted before publish.
     const insert = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
     for (const item of publishedItems) {
       try {
-        insert.run(req.params.id, item.content_id || null, item.widget_id || null,
+        const r = insert.run(req.params.id, item.content_id || null, item.widget_id || null,
                    item.child_playlist_id || null, item.zone_id || null, item.sort_order, item.duration_sec,
                    item.muted ? 1 : 0, item.play_from || null, item.play_until || null,
                    item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when ? (typeof item.play_when === 'string' ? item.play_when : JSON.stringify(item.play_when)) : null, item.weight || 1);
+        // Restore per-item schedule blocks (DELETE above cascaded them away). Both the structure and
+        // the snapshot carry them in the same {days,start,end,...} shape.
+        const blocks = Array.isArray(item.schedules) ? item.schedules : [];
+        blocks.forEach((b, i) => {
+          if (!b || !Array.isArray(b.days) || !b.days.length || !b.start || !b.end) return;
+          insSched.run(uuidv4(), r.lastInsertRowid, b.days.join(','), b.start, b.end, b.start_date || null, b.end_date || null, i);
+        });
       } catch (e) {
         if (e.message.includes('FOREIGN KEY')) {
           console.warn(`Discard: skipping snapshot item (content_id=${item.content_id}, widget_id=${item.widget_id}) — referenced entity was deleted`);
@@ -1358,7 +1374,10 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
           added.push(r.lastInsertRowid);
           const blocks = Array.isArray(it.schedules) ? it.schedules : [];
           blocks.forEach((b, i) => {
-            if (!b || !Array.isArray(b.days) || !b.start || !b.end) return;
+            // days must be NON-EMPTY: an empty array stores active_days='' and the evaluator treats
+            // that as "no day matches", so the item silently never plays. validateBlocks rejects it
+            // on the normal path; paste dropped the length check.
+            if (!b || !Array.isArray(b.days) || !b.days.length || !b.start || !b.end) return;
             insSched.run(uuidv4(), r.lastInsertRowid, b.days.join(','), b.start, b.end, b.start_date || null, b.end_date || null, i);
           });
         }
@@ -1379,19 +1398,24 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
     }
 
     if (action === 'duplicate') {
-      for (const r of rows) {
-        // Reuse the existing single-item duplicate (copies schedules too).
-        const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
-        const order = ((max && max.m) || 0) + 1;
-        const result = db.prepare(`INSERT INTO playlist_items
-          (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          req.params.id, r.content_id, r.widget_id, r.child_playlist_id, r.zone_id, order, r.duration_sec,
-          r.play_from, r.play_until, r.muted ? 1 : 0, r.enabled === 0 ? 0 : 1, r.log_play === 0 ? 0 : 1, r.fit_mode, r.play_when, r.weight || 1);
-        const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?').all(r.id);
-        const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
-        for (const s of scheds) insSched.run(uuidv4(), result.lastInsertRowid, s.active_days, s.start_time, s.end_time, s.start_date, s.end_date, s.sort_order);
-      }
+      // Wrap in a transaction like every other selection action: a mid-loop throw (an FK failure, or
+      // a schedule insert failing after its item inserted) otherwise leaves a partially-duplicated
+      // selection committed while markDraft still runs.
+      db.transaction(() => {
+        for (const r of rows) {
+          // Reuse the existing single-item duplicate (copies schedules too).
+          const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
+          const order = ((max && max.m) || 0) + 1;
+          const result = db.prepare(`INSERT INTO playlist_items
+            (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+            req.params.id, r.content_id, r.widget_id, r.child_playlist_id, r.zone_id, order, r.duration_sec,
+            r.play_from, r.play_until, r.muted ? 1 : 0, r.enabled === 0 ? 0 : 1, r.log_play === 0 ? 0 : 1, r.fit_mode, r.play_when, r.weight || 1);
+          const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?').all(r.id);
+          const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
+          for (const s of scheds) insSched.run(uuidv4(), result.lastInsertRowid, s.active_days, s.start_time, s.end_time, s.start_date, s.end_date, s.sort_order);
+        }
+      })();
       markDraft(req.params.id, req, `Duplicated ${rows.length} item(s)`);
       return res.json({ duplicated: rows.length });
     }
