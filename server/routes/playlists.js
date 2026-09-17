@@ -201,7 +201,17 @@ function attachSlideAudio(it) {
 }
 
 // Build the snapshot item list for a playlist (denormalized for device payload)
-function buildSnapshotItems(playlistId) {
+function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null) {
+  // A nesting cycle (A contains B contains A) would recurse here until the stack overflows and
+  // publish/preview 500s. The old MAX_NEST_DEPTH guard was DEAD: this function recursed via
+  // expandChildPlaylists which called back in with depth reset to 0. Thread the depth, and also
+  // track the ancestor chain PER PATH (so two items legitimately referencing the same child are
+  // still fine) and refuse a repeat outright.
+  const ancestors = _ancestors || [];
+  if (ancestors.includes(playlistId)) {
+    console.warn(`[playlist] nesting cycle at ${playlistId} — reference dropped`);
+    return [];
+  }
   const items = db.prepare(`
     SELECT pi.id AS _iid, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
            pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight,
@@ -276,13 +286,13 @@ function buildSnapshotItems(playlistId) {
    * The `depth` guard below is belt-and-braces against a row written by some other path (an
    * import, a migration, a manual fix-up). It is not the primary defence and must not become it.
    */
-  return expandChildPlaylists(items, 0);
+  return expandChildPlaylists(items, _depth, [...ancestors, playlistId]);
 }
 
 /** Max nesting depth. 1 = a playlist may contain playlists, but those may not. */
 const MAX_NEST_DEPTH = 1;
 
-function expandChildPlaylists(items, depth) {
+function expandChildPlaylists(items, depth, ancestors) {
   if (!items.some((i) => i && i.child_playlist_id)) return items;   // common case: no work, no copy
   const out = [];
   for (const it of items) {
@@ -296,7 +306,7 @@ function expandChildPlaylists(items, depth) {
     // Recurse through buildSnapshotItems so the child gets the SAME treatment as a top-level
     // playlist: the same is_active/expiry filter, the same per-item schedule blocks. Anything less
     // and a nested item would obey different rules from the identical item played directly.
-    for (const child of buildSnapshotItems(it.child_playlist_id)) {
+    for (const child of buildSnapshotItems(it.child_playlist_id, depth + 1, ancestors)) {
       const play_from = laterStamp(it.play_from, child.play_from);
       const play_until = earlierStamp(it.play_until, child.play_until);
       const merged = { ...child, zone_id: child.zone_id || it.zone_id };
@@ -613,6 +623,10 @@ router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
   const orientation = PREVIEW_ORIENTATIONS.has(req.query.orientation) ? req.query.orientation : 'landscape';
   res.json(assemblePayload({
     assignments, layout, orientation, wall_config: null, timezone: null,
+    // Without this the preview's data-source play_when gating and custom shader transitions no-op
+    // (attachDataSourceBag/customShaderRegistry key off workspace_id), so the dashboard preview would
+    // not match what a real device shows. Same omission that dropped it from the live device payload.
+    workspace_id: req.playlist.workspace_id || null,
     playback_order: req.playlist.playback_order || 'sequential',
   }));
 });
@@ -1323,6 +1337,15 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
             if (it.child_playlist_id === req.params.id) continue;
             const ch = db.prepare('SELECT id, workspace_id FROM playlists WHERE id = ?').get(it.child_playlist_id);
             if (!ch || (ch.workspace_id && ch.workspace_id !== ws)) continue;
+            // The same one-level-deep guard the single-item add route enforces, which paste skipped:
+            // refuse a child that itself holds a child (2 levels), or one that would make THIS
+            // playlist a grandchild (the reverse direction, which builds a cycle A->B->A). Paste
+            // skips a bad item rather than failing the batch. buildSnapshotItems now also refuses
+            // cycles/over-depth at render, but keeping them out of the DB is the real fix.
+            const grandchild = db.prepare('SELECT 1 FROM playlist_items WHERE playlist_id = ? AND child_playlist_id IS NOT NULL LIMIT 1').get(it.child_playlist_id);
+            if (grandchild) continue;
+            const parentRef = db.prepare('SELECT 1 FROM playlist_items WHERE child_playlist_id = ? LIMIT 1').get(req.params.id);
+            if (parentRef) continue;
           }
           const fit = it.fit_mode == null ? null : normalizeFitMode(it.fit_mode);
           if (fit === false) continue;
