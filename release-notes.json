@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "2.1.3",
+      "date": "2026-09-17",
+      "notes": [
+        "Remote control from the dashboard works fully again on Android panels. The Remote tab now mirrors the panel's whole screen (Settings and other apps, not just the playlist), and the arrow keys navigate with a highlight you move and select. This needs the ScreenTinker accessibility service enabled on the panel; a panel provisioned for it can now turn that on by itself.",
+        "The remote view is steadier and keeps up: no more flicker between the real screen and the playlist, and a fresh picture right after each tap or key press.",
+        "A device rebooted from the dashboard shows as online within seconds of coming back, instead of appearing offline for several minutes while it is actually playing.",
+        "Multi-zone and video-wall panels come back up straight into their zones after a reboot or power cut, instead of briefly showing one fullscreen item first.",
+        "A stranded display can be force-updated to a stable build even when it is stuck on a one-off test version."
+      ]
+    },
+    {
       "version": "2.1.2",
       "date": "2026-09-17",
       "notes": [
