@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.1.4 (2026-09-17)
+
 ### Fixed
 
 **Multi-zone panels no longer flash a "Connecting" overlay on cold boot.** A follow-up to the
