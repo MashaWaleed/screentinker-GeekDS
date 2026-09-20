@@ -329,6 +329,171 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
    * privilege escalation wearing the clothes of a convenience, and it is invisible afterwards
    * because the resulting edge looks exactly like a legitimate one.
    */
+  /*
+   * ============================== NOC: THIS node's graph, nothing further ==============================
+   *
+   * One poll, O(edges), built from what this node ALREADY holds: its mesh_edges rows, the mirror
+   * counts it was sent, its own scale_out status block (routes/status.js — the same numbers, not a
+   * second computation) and a few in-memory counters that tick when data actually moves. It reads
+   * no row from another node, dials nothing, starts nothing: opening the NOC must not start a
+   * snapshot, a cache fill or a mesh read (test_noc_poll_moves_no_data). It is instance-owner only,
+   * and exists only where the enrollment router is mounted — a stock install has no route (I7/I8).
+   *
+   * "Screens" are COUNTS per node (grouped queries, never a per-device scan on the poll); a
+   * per-device list is a separate, explicit call the dashboard already has.
+   */
+  router.get('/noc', requireAuth, requireInstanceOwner, (req, res) => {
+    const now = nowSec();
+    const me = thisNode();
+    const so = (() => { try { return require('./status').scaleOutStatus() || null; } catch (e) { return null; } })();
+    const parse = (v) => store.safeParseArray(v);
+    const edges = db.prepare("SELECT * FROM mesh_edges WHERE revoked_at IS NULL OR revoked_at > ?").all(now - 24 * 3600);
+    const rolesOfCaps = (caps) => caps.filter((c) => ['serves-dashboard', 'terminates-players', 'caches-content', 'relays-for-subtree', 'redistributes-content'].includes(c));
+    // Mirror counts per origin, ONE grouped query for every child at once.
+    const mirror = new Map();
+    try {
+      for (const r of db.prepare(`SELECT origin_node_id, COUNT(*) AS total,
+                                   SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) AS online,
+                                   SUM(CASE WHEN last_heartbeat IS NULL OR last_heartbeat < ? THEN 1 ELSE 0 END) AS stale
+                                   FROM mesh_mirror_devices WHERE deleted_at IS NULL GROUP BY origin_node_id`).all(now - 600)) mirror.set(r.origin_node_id, r);
+    } catch (e) { /* no mirror on a leaf */ }
+    // Copied-workspace device counts per origin (a replica's own copy), ONE grouped query.
+    const copied = new Map();
+    try {
+      for (const r of db.prepare(`SELECT w.origin_node_id, COUNT(d.id) AS total,
+                                   SUM(CASE WHEN d.status = 'online' THEN 1 ELSE 0 END) AS online,
+                                   SUM(CASE WHEN d.attached_node_id IS NULL AND d.status = 'online' THEN 1 ELSE 0 END) AS attached_here
+                                   FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                                   WHERE w.origin_node_id IS NOT NULL GROUP BY w.origin_node_id`).all()) copied.set(r.origin_node_id, r);
+    } catch (e) { /* */ }
+    let own = { total: 0, online: 0, attached_elsewhere: 0 };
+    try {
+      own = db.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) AS online,
+                        SUM(CASE WHEN attached_node_id IS NOT NULL THEN 1 ELSE 0 END) AS attached_elsewhere
+                        FROM devices d WHERE ${require('../lib/replica-proxy').LOCAL_ROWS_SQL('d')}`).get();
+    } catch (e) { /* */ }
+
+    const nodes = [];
+    const links = [];
+    const selfRoles = new Set();
+    for (const e of edges) {
+      const caps = parse(e.role_capabilities);
+      const grant = parse(e.grant_categories);
+      const peer = { id: e.peer_node_id, name: e.peer_name || null, edgeId: e.id, revoked: !!e.revoked_at, lastSyncAt: e.last_sync_at || null };
+      if (e.direction === 'up') {
+        // A parent: what it is to us is the role set it declared; we are its child.
+        const rep = so && so.replicas ? so.replicas.find((r) => r.node_id === e.peer_node_id) : null;
+        const upl = (global.__meshUplinks && typeof global.__meshUplinks.status === 'function' ? global.__meshUplinks.status() : []).find((l) => l.edgeId === e.id) || null;
+        if (grant.includes('workspace-replication')) selfRoles.add('primary');
+        nodes.push({ ...peer, kind: 'parent', roles: rolesOfCaps(caps), grant, writeGrant: parse(e.write_grant),
+          screens: null });
+        links.push({
+          from: me, to: e.peer_node_id, edgeId: e.id, direction: 'up',
+          state: e.revoked_at ? 'revoked' : (upl ? (upl.connected ? 'connected' : 'down') : 'unknown'),
+          lastError: upl ? upl.lastError || null : null,
+          headRev: so ? so.head_rev : null, ackedRev: rep ? rep.acked_rev : null,
+          // Movement counters: change when data moved over this link.
+          movement: { head_rev: so ? so.head_rev : null, acked_rev: rep ? rep.acked_rev : null, last_sync_at: e.last_sync_at || null,
+                      relayed: require('../lib/mesh/command-relay').relayedCount(e.peer_node_id), buffered: upl ? upl.buffered : null },
+        });
+      } else {
+        const r = so && so.replica_of ? so.replica_of.find((x) => x.node_id === e.peer_node_id) : null;
+        if (caps.includes('serves-dashboard')) selfRoles.add('replica');
+        if (caps.includes('relays-for-subtree')) selfRoles.add('relay');
+        if (caps.includes('consumes-telemetry') || caps.includes('consumes-proof-of-play')) selfRoles.add('hub');
+        const m = mirror.get(e.peer_node_id) || null;
+        const c = copied.get(e.peer_node_id) || null;
+        const pt = require('../lib/mesh/player-termination');
+        nodes.push({ ...peer, kind: 'child', roles: rolesOfCaps(caps).length ? ['is served by this node'] : [], grant, capabilitiesHere: rolesOfCaps(caps),
+          // Screens: what we hold about that node's screens (mirror), or our copy's rows. Counts only.
+          screens: c ? { total: c.total, online: c.online, attachedHere: c.attached_here, stale: Math.max(0, c.total - c.online) }
+                     : (m ? { total: m.total, online: m.online, stale: m.stale, attachedHere: 0 }
+                          : { total: 0, online: 0, stale: 0, attachedHere: 0 }) });
+        const state = e.revoked_at ? 'revoked' : (r ? (r.edge === 'up' ? ((r.lag_s != null && r.lag_s > 60) ? 'lagging' : 'connected') : 'down')
+                                                    : (require('../lib/mesh/mirror-store').freshnessOf(e, now) === 'fresh' ? 'connected' : 'down'));
+        links.push({
+          from: e.peer_node_id, to: me, edgeId: e.id, direction: 'down', state,
+          lag_s: r ? r.lag_s : null, phase: r ? r.phase : null, lastAppliedRev: r ? r.last_applied_rev : null, error: r ? r.error : null,
+          players: r && r.players ? r.players : null, cache: r && r.cache ? r.cache : null,
+          movement: { last_applied_rev: r ? r.last_applied_rev : null, last_sync_at: e.last_sync_at || null,
+                      players_sent: r && r.players ? r.players.sent : null, cache_stored: r && r.cache ? r.cache.stored : null,
+                      relays_delivered: pt.relaysDelivered(e.id) },
+        });
+      }
+    }
+    // Nodes reached through a child: learned from the paths their reports took, counts only.
+    let indirect = [];
+    try {
+      indirect = db.prepare('SELECT node_id, hops, via_edge_id, last_seen_at FROM mesh_node_paths ORDER BY hops, node_id').all()
+        .map((r) => { const via = edges.find((e) => e.id === r.via_edge_id); const m = mirror.get(r.node_id) || null;
+          return { id: r.node_id, kind: 'indirect', hops: r.hops, via: via ? via.peer_node_id : null, lastSeenAt: r.last_seen_at,
+                   name: (db.prepare('SELECT node_name FROM mesh_mirror_nodes WHERE origin_node_id = ?').get(r.node_id) || {}).node_name || null,
+                   screens: m ? { total: m.total, online: m.online, stale: m.stale, attachedHere: 0 } : null }; });
+    } catch (e) { indirect = []; }
+    /*
+     * ?node=<id>: the SELECTED node's screens and last alerts — asked once per selection by the
+     * dashboard, never on the 3 s poll (the poll test holds that the interval call carries no
+     * node). Bounded: 50 rows, stale first, plus how many more; the normal Displays list is where
+     * the rest lives. Sources, in order: this node's own rows (LOCAL_ROWS_SQL); a copied
+     * workspace's rows (a replica of that node); the mirror rows that node reported (a plain hub).
+     */
+    let selected = null;
+    const want = typeof req.query.node === 'string' ? req.query.node : null;
+    if (want) {
+      const LIMIT = 50;
+      const age = (t) => (t ? Math.max(0, now - t) : null);
+      let rows = [], total = 0, alerts = [];
+      try {
+        if (want === me) {
+          const local = require('../lib/replica-proxy').LOCAL_ROWS_SQL('d');
+          total = db.prepare(`SELECT COUNT(*) AS n FROM devices d WHERE ${local}`).get().n;
+          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist
+                               FROM devices d LEFT JOIN device_resolved_playlist r ON r.device_id = d.id LEFT JOIN playlists p ON p.id = r.playlist_id
+                              WHERE ${local} ORDER BY (d.status = 'online') ASC, COALESCE(d.last_heartbeat, 0) ASC LIMIT ?`).all(LIMIT);
+          alerts = db.prepare(`SELECT a.id, a.metric, a.severity, a.opened_at, a.closed_at, d.name AS device
+                                 FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
+                                WHERE a.workspace_id IN (SELECT id FROM workspaces WHERE origin_node_id IS NULL)
+                                ORDER BY a.opened_at DESC LIMIT 5`).all();
+        } else if (copied.has(want)) {
+          total = copied.get(want).total;
+          rows = db.prepare(`SELECT d.id, d.name, d.status, d.last_heartbeat, d.attached_node_id, p.name AS playlist
+                               FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                               LEFT JOIN device_resolved_playlist r ON r.device_id = d.id LEFT JOIN playlists p ON p.id = r.playlist_id
+                              WHERE w.origin_node_id = ? ORDER BY (d.status = 'online') ASC, COALESCE(d.last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT);
+          alerts = db.prepare(`SELECT a.id, a.metric, a.severity, a.opened_at, a.closed_at, d.name AS device
+                                 FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
+                                WHERE a.workspace_id IN (SELECT id FROM workspaces WHERE origin_node_id = ?)
+                                ORDER BY a.opened_at DESC LIMIT 5`).all(want);
+        } else {
+          total = (mirror.get(want) || { total: 0 }).total;
+          rows = db.prepare(`SELECT device_id AS id, name, status, last_heartbeat, NULL AS attached_node_id, NULL AS playlist
+                               FROM mesh_mirror_devices WHERE origin_node_id = ? AND deleted_at IS NULL
+                              ORDER BY (status = 'online') ASC, COALESCE(last_heartbeat, 0) ASC LIMIT ?`).all(want, LIMIT);
+          alerts = db.prepare(`SELECT id, alert_type AS metric, severity, opened_at, closed_at, subject_count AS device
+                                 FROM mesh_mirror_alerts WHERE origin_node_id = ? ORDER BY opened_at DESC LIMIT 5`).all(want);
+        }
+      } catch (e) { rows = []; alerts = []; }
+      selected = {
+        id: want, asOf: now,
+        screens: rows.map((d) => ({
+          id: d.id, name: d.name || d.id.slice(0, 8), status: d.status || 'unknown', seen_s: age(d.last_heartbeat),
+          // Where the screen's socket is: here, on the node that owns it, or on another replica.
+          attached: d.attached_node_id ? (d.attached_node_id === me ? 'here' : d.attached_node_id) : (want === me ? 'here' : 'primary'),
+          playlist: d.playlist || null,
+        })),
+        more: Math.max(0, (total || 0) - rows.length),
+        alerts: alerts.map((a) => ({ id: a.id, metric: a.metric, severity: a.severity, opened_at: a.opened_at, closed_at: a.closed_at, device: a.device == null ? null : String(a.device) })),
+      };
+    }
+
+    res.json({
+      asOf: now,
+      self: { id: me, name: store.nodeName(db), roles: [...selfRoles], screens: { total: own.total || 0, online: own.online || 0, attachedElsewhere: own.attached_elsewhere || 0 } },
+      nodes, links, indirect, selected,
+      depthCap: config.meshMaxDepth,
+    });
+  });
+
   router.get('/shareable-workspaces', requireAuth, (req, res) => {
     const isOwner = req.user && req.user.role === 'platform_admin';
     try {
