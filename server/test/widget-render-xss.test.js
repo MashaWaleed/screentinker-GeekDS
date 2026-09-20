@@ -60,6 +60,14 @@ test('valid color/gradient backgrounds are preserved', async () => {
   assert.ok(html.includes('color:#3B82F6'), 'legit hex color preserved');
 });
 
+test('webpage kiosk URLs use the serving origin instead of the dashboard localhost', async () => {
+  const kioskPath = '/api/kiosk/11111111-1111-4111-8111-111111111111/render';
+  seed('webpage1', 'webpage', { url: 'http://localhost:3001' + kioskPath });
+  const html = await render('webpage1');
+  assert.match(html, new RegExp(`src="${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${kioskPath}"`));
+  assert.doesNotMatch(html, /localhost:3001/, 'a display must not resolve the dashboard machine as itself');
+});
+
 // A widget config field that is a JSON ARRAY/OBJECT (never normalized for non-slide widgets) used to
 // slip past escapeHtml, which returned non-strings unchanged; the surrounding template then
 // string-coerced it, unescaped. escapeHtml now String()-coerces first.

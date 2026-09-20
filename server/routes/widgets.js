@@ -300,7 +300,7 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'weather': return renderWeather(config);
     case 'rss': return renderRSS(config);
     case 'text': return renderText(config, iframeSandbox);
-    case 'webpage': return renderWebpage(config, iframeSandbox);
+    case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin);
     case 'social': return renderSocial(config);
     case 'directory-board': return renderDirectoryBoard(config);
     case 'directory-search': return renderDirectorySearch(config);
@@ -399,6 +399,7 @@ router.get('/:id/render', (req, res) => {
   res.setHeader('Content-Type', 'text/html');
   res.send(renderWidgetHtml(widget.widget_type, config, {
     iframeSandbox,
+    origin: `${req.protocol}://${req.get('host')}`,
     resolveImage: imageResolverFor(widget),
     resolveFont: require('./fonts').fontResolverFor(widget),
     resolveData: dataResolverFor(widget),
@@ -831,14 +832,28 @@ function renderText(c, iframeSandbox = 'allow-scripts') {
 </style></head><body><iframe sandbox="${escapeHtml(iframeSandbox)}" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
 }
 
-function renderWebpage(c, iframeSandbox = 'allow-scripts') {
+function renderWebpage(c, iframeSandbox = 'allow-scripts', origin) {
   const zoom = (c.zoom || 100) / 100;
   const invZoom = 100 / (c.zoom || 100) * 100;
+  let url = safeUrl(c.url);
+  if (origin && typeof c.url === 'string' && /^\/api\/kiosk\/[a-f0-9-]+\/render(?:\?|$)/i.test(c.url)) {
+    url = new URL(c.url, origin).toString();
+  }
+  // Older kiosk assignments saved the dashboard's absolute origin. When the dashboard was
+  // opened at localhost, that origin points at the display itself. Kiosk renders are served by
+  // this widget's origin, so only rewrite that known-bad generated URL.
+  try {
+    const parsed = new URL(url);
+    if (origin && ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) &&
+        /^\/api\/kiosk\/[a-f0-9-]+\/render$/i.test(parsed.pathname)) {
+      url = new URL(parsed.pathname + parsed.search, origin).toString();
+    }
+  } catch (_) { /* safeUrl already reduced invalid input to about:blank */ }
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; } body { height:100vh; overflow:hidden; }
   iframe { width:${invZoom}%; height:${invZoom}%; border:0; transform:scale(${zoom}); transform-origin:0 0; }
 </style></head><body>
-<iframe src="${escapeHtml(safeUrl(c.url))}" sandbox="${escapeHtml(iframeSandbox)}"></iframe>
+<iframe src="${escapeHtml(url)}" sandbox="${escapeHtml(iframeSandbox)}"></iframe>
 ${c.refresh_interval > 0 ? `<script>setInterval(()=>document.querySelector('iframe').src=document.querySelector('iframe').src,${c.refresh_interval * 1000});</script>` : ''}
 </body></html>`;
 }
