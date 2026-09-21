@@ -162,6 +162,7 @@ test('clock dates can be hidden, formatted, and placed around the time', async (
   assert.match(left, /year:'2-digit', month:'2-digit', day:'2-digit'/, 'the selected date format reaches Intl');
   assert.match(left, /font-size:31px/, 'the date size is independent from the time size');
   assert.match(left, /color:#123456/, 'the date color is independent from the time color');
+  assert.match(left, /color:#123456; opacity:1/, 'an explicit date color is not dimmed');
 
   const above = await renderOf({ timezone: 'UTC', date_position: 'above' });
   assert.ok(above.indexOf('id="date"') < above.indexOf('id="time"'), 'above date is placed before the time');

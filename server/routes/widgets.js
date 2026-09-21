@@ -624,7 +624,7 @@ function renderClock(c) {
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:${row ? 'row' : 'column'}; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
   #time { font-size:${safeNumber(c.font_size, 64)}px; font-weight:700; color:${safeCss(c.color, '#FFFFFF')}; }
-  #date { font-size:${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))}px; color:${safeCss(c.date_color, safeCss(c.color, '#FFFFFF'))}; opacity:0.7; ${dateMargin} }
+  #date { font-size:${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))}px; color:${safeCss(c.date_color, safeCss(c.color, '#FFFFFF'))}; opacity:${c.date_color ? 1 : 0.7}; ${dateMargin} }
 </style></head><body>
 ${dateFirst ? dateHtml : ''}
 <div id="time"></div>

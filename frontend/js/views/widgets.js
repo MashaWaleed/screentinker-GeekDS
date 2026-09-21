@@ -6,18 +6,34 @@ import { renderApprovalBar } from '../components/approval-actions.js';
 
 /*
  * Real IANA zones for the clock widget's picker (#316). Intl.supportedValuesOf is the browser's own
- * list; where it is missing (older WebViews) the field stays free text and the server still refuses
- * an invalid value on save, so the worst case is the old behaviour minus the silent UTC fallback.
+ * list; where it is missing (older WebViews), use a free-text field and let the server validate the
+ * IANA name on save. That preserves the old workflow without the silent UTC fallback.
  */
 function dashboardTimezone() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) { return 'UTC'; }
 }
 
-function tzOptions(selected) {
-  let zones = [];
-  try { zones = Intl.supportedValuesOf('timeZone') || []; } catch (_) { zones = []; }
+function supportedTimezones() {
+  try { return Intl.supportedValuesOf('timeZone') || []; } catch (_) { return []; }
+}
+
+function timezoneField(selected) {
+  const zones = supportedTimezones();
+  if (!zones.length) {
+    return `<input type="text" id="wTimezone" class="input" value="${escAttr(selected)}" placeholder="Europe/London">`;
+  }
   const all = [...new Set([selected, dashboardTimezone(), 'UTC', ...zones].filter(Boolean))].sort();
-  return all.map((z) => `<option value="${escAttr(z)}" ${z === selected ? 'selected' : ''}>${escAttr(z)}</option>`).join('');
+  return `<select id="wTimezone" class="input" style="background:var(--bg-input)">${all.map((z) => `<option value="${escAttr(z)}" ${z === selected ? 'selected' : ''}>${escAttr(z)}</option>`).join('')}</select>`;
+}
+
+function dateFormatLabel(format) {
+  const key = `widget.field.date_format_${format}`;
+  const name = t(key).split(' — ')[0];
+  const options = format === 'full' ? { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }
+    : format === 'long' ? { year: 'numeric', month: 'long', day: 'numeric' }
+      : format === 'medium' ? { year: 'numeric', month: 'short', day: 'numeric' }
+        : { year: '2-digit', month: '2-digit', day: '2-digit' };
+  return `${name} — ${new Date(Date.UTC(2026, 8, 3)).toLocaleDateString(undefined, options)}`;
 }
 /*
  * ⚠️ esc IS AN IMPORT, NOT A GLOBAL — and it was missing for sixteen days.
@@ -637,12 +653,12 @@ export async function render(container) {
           const dateFormat = ['full', 'long', 'medium', 'short'].includes(config.date_format) ? config.date_format : 'full';
         html += `
           <div class="form-group"><label>${t('widget.field.format')}</label><select id="wFormat" class="input" style="background:var(--bg-input)"><option value="12h" ${config.format === '12h' ? 'selected' : ''}>${t('widget.field.format_12h')}</option><option value="24h" ${config.format === '24h' ? 'selected' : ''}>${t('widget.field.format_24h')}</option></select></div>
-          <div class="form-group"><label>${t('widget.field.timezone')}</label><select id="wTimezone" class="input" style="background:var(--bg-input)">${tzOptions(timezone)}</select><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" id="wUseDashboardTimezone">${t('widget.field.use_dashboard_timezone')}</button><button type="button" class="btn btn-secondary btn-sm" id="wUseServerTimezone">${t('widget.field.use_server_timezone')}</button></div><div class="form-hint" id="wTimezoneHint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.timezone_hint')}</div></div>
+          <div class="form-group"><label>${t('widget.field.timezone')}</label>${timezoneField(timezone)}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" id="wUseDashboardTimezone">${t('widget.field.use_dashboard_timezone')}</button><button type="button" class="btn btn-secondary btn-sm" id="wUseServerTimezone">${t('widget.field.use_server_timezone')}</button></div><div class="form-hint" id="wTimezoneHint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.timezone_hint')}</div></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowSeconds" ${config.show_seconds === false ? '' : 'checked'}> ${t('widget.field.show_seconds')}</label></div>
           <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wLocale" class="input" value="${config.locale || ''}" placeholder="es-ES"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.locale_hint')}</div></div>
           <div class="form-group"><label>${t('widget.field.font_size_px')}</label><input type="number" id="wFontSize" class="input" value="${config.font_size || 64}"></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowDate" ${config.show_date === false ? '' : 'checked'}> ${t('widget.field.show_date')}</label></div>
-          <div class="form-group"><label>${t('widget.field.date_format')}</label><select id="wDateFormat" class="input" style="background:var(--bg-input)"><option value="full" ${dateFormat === 'full' ? 'selected' : ''}>${t('widget.field.date_format_full')}</option><option value="long" ${dateFormat === 'long' ? 'selected' : ''}>${t('widget.field.date_format_long')}</option><option value="medium" ${dateFormat === 'medium' ? 'selected' : ''}>${t('widget.field.date_format_medium')}</option><option value="short" ${dateFormat === 'short' ? 'selected' : ''}>${t('widget.field.date_format_short')}</option></select></div>
+          <div class="form-group"><label>${t('widget.field.date_format')}</label><select id="wDateFormat" class="input" style="background:var(--bg-input)"><option value="full" ${dateFormat === 'full' ? 'selected' : ''}>${dateFormatLabel('full')}</option><option value="long" ${dateFormat === 'long' ? 'selected' : ''}>${dateFormatLabel('long')}</option><option value="medium" ${dateFormat === 'medium' ? 'selected' : ''}>${dateFormatLabel('medium')}</option><option value="short" ${dateFormat === 'short' ? 'selected' : ''}>${dateFormatLabel('short')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.date_position')}</label><select id="wDatePosition" class="input" style="background:var(--bg-input)"><option value="below" ${datePosition === 'below' ? 'selected' : ''}>${t('widget.field.date_position_below')}</option><option value="above" ${datePosition === 'above' ? 'selected' : ''}>${t('widget.field.date_position_above')}</option><option value="left" ${datePosition === 'left' ? 'selected' : ''}>${t('widget.field.date_position_left')}</option><option value="right" ${datePosition === 'right' ? 'selected' : ''}>${t('widget.field.date_position_right')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.date_font_size_px')}</label><input type="number" id="wDateFontSize" class="input" value="${config.date_font_size || Math.max(16, Math.round((config.font_size || 64) / 3))}" min="8"></div>
           <div class="form-group"><label>${t('widget.field.date_color')}</label><input type="color" id="wDateColor" value="${config.date_color || config.color || '#FFFFFF'}" style="width:60px;height:32px;border:none"></div>
@@ -824,7 +840,7 @@ export async function render(container) {
     const timezone = document.getElementById('wTimezone');
     const setTimezone = (zone) => {
       if (!timezone || !zone) return;
-      if (!Array.from(timezone.options).some((option) => option.value === zone)) {
+      if (timezone.tagName === 'SELECT' && !Array.from(timezone.options).some((option) => option.value === zone)) {
         timezone.add(new Option(zone, zone));
       }
       timezone.value = zone;
@@ -1245,7 +1261,10 @@ export async function render(container) {
     const plugin = pluginTypeById().get(type);
     if (plugin) return readPluginFields(plugin.fields || [], 'wPlugin_');
     switch (type) {
-      case 'clock': Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: parseInt(val('wFontSize')) || 64, color: val('wColor'), background: val('wBg'),
+      case 'clock': {
+        const fontSize = parseInt(val('wFontSize')) || 64;
+        const dateFontSize = parseInt(val('wDateFontSize'));
+        Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: fontSize, color: val('wColor'), background: val('wBg'),
         // #323: seconds were always on with no way to turn them off, and the clock was formatted
         // in en-US regardless of the operator's language. Both are settings now.
         show_seconds: document.getElementById('wShowSeconds') ? document.getElementById('wShowSeconds').checked : true,
@@ -1253,8 +1272,9 @@ export async function render(container) {
         show_date: document.getElementById('wShowDate') ? document.getElementById('wShowDate').checked : true,
         date_format: val('wDateFormat') || 'full',
         date_position: val('wDatePosition') || 'below',
-        date_font_size: parseInt(val('wDateFontSize')) || 21,
+        date_font_size: dateFontSize || Math.max(16, Math.round(fontSize / 3)),
         date_color: val('wDateColor') }); break;
+      }
       case 'weather': Object.assign(config, { location: val('wLocation'), units: val('wUnits'), font_size: parseInt(val('wFontSize')) || 48, color: val('wColor'),
         // #324: layout, an optional city line, and a language for the condition text.
         layout: val('wLayout') || 'vertical',
