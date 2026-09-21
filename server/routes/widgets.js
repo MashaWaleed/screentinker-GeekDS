@@ -835,18 +835,17 @@ function renderText(c, iframeSandbox = 'allow-scripts') {
 function renderWebpage(c, iframeSandbox = 'allow-scripts', origin) {
   const zoom = (c.zoom || 100) / 100;
   const invZoom = 100 / (c.zoom || 100) * 100;
-  let url = safeUrl(c.url);
-  if (origin && typeof c.url === 'string' && /^\/api\/kiosk\/[a-f0-9-]+\/render(?:\?|$)/i.test(c.url)) {
-    url = new URL(c.url, origin).toString();
-  }
+  const kioskPath = typeof c.url === 'string' && /^\/api\/kiosk\/[a-f0-9-]+\/render(?:\?|$)/i.test(c.url);
+  let url = kioskPath ? c.url : safeUrl(c.url);
   // Older kiosk assignments saved the dashboard's absolute origin. When the dashboard was
   // opened at localhost, that origin points at the display itself. Kiosk renders are served by
   // this widget's origin, so only rewrite that known-bad generated URL.
   try {
     const parsed = new URL(url);
-    if (origin && ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) &&
+    if (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) &&
         /^\/api\/kiosk\/[a-f0-9-]+\/render$/i.test(parsed.pathname)) {
-      url = new URL(parsed.pathname + parsed.search, origin).toString();
+      const path = parsed.pathname + parsed.search;
+      url = origin ? new URL(path, origin).toString() : path;
     }
   } catch (_) { /* safeUrl already reduced invalid input to about:blank */ }
   return `<!DOCTYPE html><html><head><style>
