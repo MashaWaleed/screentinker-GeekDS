@@ -68,6 +68,8 @@ stp_display_t *display_fbdev_open(const char *dev_path) {
 
     stp_display_t *d = calloc(1, sizeof(*d));
     d->width = vinfo.xres; d->height = vinfo.yres; d->stride = finfo.line_length;
+    d->pixel_layout = (vinfo.red.offset == 0 && vinfo.blue.offset == 16)
+                      ? STP_PIXELS_RGBX : STP_PIXELS_BGRX;
     d->pixels = map; d->backend_name = "fbdev";
     d->present = fb_present; d->set_power = fb_set_power; d->destroy = fb_destroy;
     d->priv = p;

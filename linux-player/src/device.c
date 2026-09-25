@@ -30,6 +30,8 @@ void device_init(device_ctx_t *ctx, const char *identity_path, const char *cache
     snprintf(ctx->cache_dir, sizeof(ctx->cache_dir), "%s", cache_dir);
     snprintf(ctx->server_base_url, sizeof(ctx->server_base_url), "%s", server_base_url);
     ctx->disp = disp;
+    ctx->screenshot = screenshot_capture_start(disp);
+    if (!ctx->screenshot) LOG("screenshot: worker unavailable");
 
     identity_load(&ctx->identity, identity_path); /* ok if it doesn't exist yet */
     identity_ensure_fingerprint(&ctx->identity);
@@ -67,6 +69,19 @@ static char *build_device_info(void) {
     char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
+}
+
+static void add_capabilities(cJSON *payload) {
+    cJSON *caps = cJSON_AddArrayToObject(payload, "capabilities");
+    cJSON_AddItemToArray(caps, cJSON_CreateString("playback.video"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("playback.image"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("playback.zones"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("playback.pip"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("audio.mute"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("audio.volume"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("display.power"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("offline.cache"));
+    cJSON_AddItemToArray(caps, cJSON_CreateString("remote.screenshot"));
 }
 
 static cJSON *collect_telemetry(device_ctx_t *ctx) {
@@ -119,6 +134,7 @@ void device_tick_registration_or_heartbeat(device_ctx_t *ctx) {
         cJSON_AddStringToObject(payload, "pairing_code", pairing_code);
         cJSON_AddStringToObject(payload, "fingerprint", ctx->identity.fingerprint);
         cJSON_AddItemToObject(payload, "device_info", info);
+        add_capabilities(payload);
         sioc_emit(ctx->sioc, "device:register", payload);
         cJSON_Delete(payload);
         return;
@@ -135,6 +151,7 @@ void device_tick_registration_or_heartbeat(device_ctx_t *ctx) {
         cJSON_AddStringToObject(payload, "device_id", ctx->identity.device_id);
         cJSON_AddStringToObject(payload, "device_token", ctx->identity.device_token);
         cJSON_AddStringToObject(payload, "fingerprint", ctx->identity.fingerprint);
+        add_capabilities(payload);
         sioc_emit(ctx->sioc, "device:register", payload);
         cJSON_Delete(payload);
         return;
@@ -152,6 +169,24 @@ void device_tick_registration_or_heartbeat(device_ctx_t *ctx) {
 
 bool device_needs_frequent_tick(device_ctx_t *ctx) {
     return !ctx->identity.paired || !ctx->registered_this_session;
+}
+
+void device_service(device_ctx_t *ctx) {
+    char *image_b64 = screenshot_capture_take_result(ctx->screenshot);
+    if (!image_b64) return;
+    if (ctx->identity.paired && ctx->registered_this_session && sioc_is_connected(ctx->sioc)) {
+        cJSON *payload = cJSON_CreateObject();
+        cJSON_AddStringToObject(payload, "device_id", ctx->identity.device_id);
+        cJSON_AddStringToObject(payload, "image_b64", image_b64);
+        sioc_emit(ctx->sioc, "device:screenshot", payload);
+        cJSON_Delete(payload);
+    }
+    free(image_b64);
+}
+
+void device_shutdown(device_ctx_t *ctx) {
+    screenshot_capture_stop(ctx->screenshot);
+    ctx->screenshot = NULL;
 }
 
 static void handle_registered(device_ctx_t *ctx, cJSON *data) {
@@ -251,6 +286,10 @@ void device_on_event(void *user, const char *event, cJSON *data) {
     if (strcmp(event, "device:registered") == 0) handle_registered(ctx, data);
     else if (strcmp(event, "device:playlist-update") == 0) handle_playlist_update(ctx, data);
     else if (strcmp(event, "device:command") == 0) handle_command(ctx, data);
+    else if (strcmp(event, "device:screenshot-request") == 0) {
+        LOG("screenshot: request received");
+        screenshot_capture_request(ctx->screenshot);
+    }
     else if (strcmp(event, "device:paired") == 0) LOG("device: paired notification received");
     else if (strcmp(event, "device:auth-error") == 0) handle_auth_error(ctx, data);
     else if (strcmp(event, "device:heartbeat-ack") == 0) { /* expected, nothing to do */ }

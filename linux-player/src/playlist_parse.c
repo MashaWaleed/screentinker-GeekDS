@@ -13,7 +13,11 @@ static double jnum(cJSON *o, const char *key, double fallback) {
 }
 static bool jbool(cJSON *o, const char *key, bool fallback) {
     cJSON *j = cJSON_GetObjectItem(o, key);
-    return j ? cJSON_IsTrue(j) : fallback;
+    if (!j) return fallback;
+    /* SQLite-backed playlist flags (including `muted`) are sent as 0/1,
+     * while some clients send JSON booleans.  Accept both wire forms. */
+    if (cJSON_IsNumber(j)) return j->valuedouble != 0;
+    return cJSON_IsTrue(j);
 }
 
 static void parse_zone(cJSON *z, stp_zone_t *out) {
@@ -76,6 +80,7 @@ static void parse_item(cJSON *a, stp_assignment_t *out) {
     snprintf(out->zone_id, sizeof(out->zone_id), "%s", jstr(a, "zone_id", ""));
     out->sort_order = (int)jnum(a, "sort_order", 0);
     out->duration_sec = (int)jnum(a, "duration_sec", 10);
+    out->muted = jbool(a, "muted", false);
     snprintf(out->schedule_start, sizeof(out->schedule_start), "%s", jstr(a, "schedule_start", ""));
     snprintf(out->schedule_end, sizeof(out->schedule_end), "%s", jstr(a, "schedule_end", ""));
     snprintf(out->schedule_days, sizeof(out->schedule_days), "%s", jstr(a, "schedule_days", ""));
@@ -106,7 +111,12 @@ void playlist_parse(cJSON *payload, stp_playlist_t *out) {
              jstr(payload, "background_color", "#000000"));
 
     cJSON *layout = cJSON_GetObjectItem(payload, "layout");
-    if (layout && !cJSON_IsNull(layout)) { parse_layout(layout, &out->layout); out->has_layout = out->layout.zone_count > 1; }
+    /* The server strips zone IDs when there are fewer than two zones, making
+     * a one-zone layout a fullscreen playlist on the wire. */
+    if (layout && !cJSON_IsNull(layout)) {
+        parse_layout(layout, &out->layout);
+        out->has_layout = out->layout.zone_count > 1;
+    }
 
     cJSON *assignments = cJSON_GetObjectItem(payload, "assignments");
     if (cJSON_IsArray(assignments)) {

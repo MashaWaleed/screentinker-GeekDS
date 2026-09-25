@@ -84,6 +84,7 @@ static uint32_t glyph_mask(char c) {
 
 static void draw_seg_line(stp_display_t *d, int x0, int y0, int cell_w, int cell_h,
                            int stroke, const seg_t *s, uint32_t color) {
+    color = stp_pack_color(d, color);
     int x1 = x0 + s->x1 * cell_w, y1 = y0 + s->y1 * cell_h;
     int x2 = x0 + s->x2 * cell_w, y2 = y0 + s->y2 * cell_h;
     int dx = x2 - x1, dy = y2 - y1;
@@ -129,6 +130,7 @@ void text_draw_centered(stp_display_t *d, stp_rect_t rect, const char *s, int sc
 }
 
 void rect_fill(stp_display_t *d, stp_rect_t r, uint32_t bgra) {
+    bgra = stp_pack_color(d, bgra);
     for (int y = 0; y < r.h; y++) {
         uint32_t *row = (uint32_t *)(d->pixels + (size_t)(r.y + y) * d->stride + (size_t)r.x * 4);
         for (int x = 0; x < r.w; x++) row[x] = bgra;

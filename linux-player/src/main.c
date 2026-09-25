@@ -73,6 +73,7 @@ int main(int argc, char **argv) {
     ctx.sioc = sioc_connect(ws_url, &ctx, device_on_event, device_on_state);
     if (!ctx.sioc) {
         fprintf(stderr, "error: could not start websocket client for %s\n", ws_url);
+        device_shutdown(&ctx);
         disp->destroy(disp);
         return 1;
     }
@@ -83,6 +84,7 @@ int main(int argc, char **argv) {
 
     while (!g_stop) {
         sioc_service(ctx.sioc, 200);
+        device_service(&ctx);
 
         time_t now = time(NULL);
         int interval = device_needs_frequent_tick(&ctx) ? frequent_interval_s : heartbeat_interval_s;
@@ -94,6 +96,7 @@ int main(int argc, char **argv) {
 
     LOG("shutting down");
     player_stop();
+    device_shutdown(&ctx);
     sioc_close(ctx.sioc);
     disp->destroy(disp);
     return 0;

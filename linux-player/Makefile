@@ -1,6 +1,6 @@
 CC ?= gcc
 PKGS = libavformat libavcodec libavutil libswscale libswresample libdrm libwebsockets libcurl libcjson alsa
-CFLAGS ?= -O2 -Wall -Wextra -Iinclude -DWITH_ALSA $(shell pkg-config --cflags $(PKGS))
+CFLAGS ?= -O3 -Wall -Wextra -Iinclude -DWITH_ALSA $(shell pkg-config --cflags $(PKGS))
 LDFLAGS ?= $(shell pkg-config --libs $(PKGS)) -lpthread -lm
 
 SRC = $(wildcard src/*.c)
